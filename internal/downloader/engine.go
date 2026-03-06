@@ -325,6 +325,8 @@ func (e *DownloadEngine) downloadSegment(ctx context.Context, file *os.File, seg
 	return fmt.Errorf("segment %d failed after %d retries over ~30min: %w", segIdx+1, len(segmentBackoffs), lastErr)
 }
 
+const stallTimeout = 60 * time.Second
+
 func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File, seg *SegmentState, counter *atomic.Int64, url string) error {
 	segLen := seg.End - seg.Start + 1
 	currentOffset := seg.Start + seg.Downloaded
@@ -333,7 +335,14 @@ func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File,
 		return nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Use a child context with stall detection — cancels if no data for 60s
+	stallCtx, stallCancel := context.WithCancel(ctx)
+	defer stallCancel()
+
+	stallTimer := time.AfterFunc(stallTimeout, stallCancel)
+	defer stallTimer.Stop()
+
+	req, err := http.NewRequestWithContext(stallCtx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
@@ -342,6 +351,9 @@ func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File,
 	client := &http.Client{Transport: e.transport, Timeout: 0}
 	resp, err := client.Do(req)
 	if err != nil {
+		if stallCtx.Err() != nil && ctx.Err() == nil {
+			return fmt.Errorf("stalled: no data for %s", stallTimeout)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -364,6 +376,9 @@ func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File,
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			// Reset stall timer on successful read
+			stallTimer.Reset(stallTimeout)
+
 			// Rate limit — re-fetch each iteration so runtime changes take effect
 			if lim := e.getLimiter(); lim != nil {
 				if err := lim.WaitN(ctx, n); err != nil {
@@ -382,6 +397,10 @@ func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File,
 		if readErr != nil {
 			if readErr == io.EOF {
 				return nil
+			}
+			// Check if it was a stall timeout
+			if stallCtx.Err() != nil && ctx.Err() == nil {
+				return fmt.Errorf("stalled: no data for %s", stallTimeout)
 			}
 			return readErr
 		}
