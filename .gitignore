@@ -1,0 +1,8 @@
+bin/
+.env
+.env.local
+*.exe
+*.test
+*.out
+.DS_Store
+.history.json

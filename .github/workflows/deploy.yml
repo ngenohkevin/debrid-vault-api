@@ -1,0 +1,86 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Run tests
+        run: go test ./... -v
+
+      - name: Build ARM64 binary
+        run: GOOS=linux GOARCH=arm64 go build -o bin/debrid-vault ./main.go
+
+      - name: Set up Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Deploy to Raspberry Pi
+        run: |
+          chmod +x bin/debrid-vault
+          scp -o StrictHostKeyChecking=no bin/debrid-vault root@pi:/home/ngenoh/dev/backend/debrid-vault/debrid-vault
+
+          ssh -o StrictHostKeyChecking=no root@pi << 'DEPLOY'
+          # Create directories
+          mkdir -p /home/ngenoh/dev/backend/debrid-vault
+          mkdir -p /home/ngenoh/downloads/staging
+          mkdir -p /mnt/perigrine/media/movies
+          mkdir -p /mnt/perigrine/media/tv-shows
+
+          # Create service if not exists
+          if [ ! -f /etc/systemd/system/debrid-vault.service ]; then
+            cat > /etc/systemd/system/debrid-vault.service << 'SERVICE'
+          [Unit]
+          Description=Debrid Vault API
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ngenoh
+          Group=ngenoh
+          WorkingDirectory=/home/ngenoh/dev/backend/debrid-vault
+          ExecStart=/home/ngenoh/dev/backend/debrid-vault/debrid-vault
+          EnvironmentFile=/home/ngenoh/dev/backend/debrid-vault/.env
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+            systemctl daemon-reload
+            systemctl enable debrid-vault.service
+          fi
+
+          # Create default .env if not exists
+          if [ ! -f /home/ngenoh/dev/backend/debrid-vault/.env ]; then
+            cat > /home/ngenoh/dev/backend/debrid-vault/.env << 'ENV'
+          PORT=6501
+          RD_API_KEY=change-me
+          DOWNLOAD_DIR=/home/ngenoh/downloads/staging
+          MOVIES_DIR=/mnt/perigrine/media/movies
+          TVSHOWS_DIR=/mnt/perigrine/media/tv-shows
+          ALLOWED_ORIGINS=*
+          ENV
+            chown ngenoh:ngenoh /home/ngenoh/dev/backend/debrid-vault/.env
+          fi
+
+          chown ngenoh:ngenoh /home/ngenoh/dev/backend/debrid-vault/debrid-vault
+          systemctl restart debrid-vault.service
+          sleep 3
+          curl -sf http://localhost:6501/health && echo " Backend deployed!" || echo " Health check failed"
+          DEPLOY
