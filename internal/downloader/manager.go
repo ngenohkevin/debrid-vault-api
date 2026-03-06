@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -196,7 +195,8 @@ func (m *Manager) ResumeDownload(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("download not found: %s", id)
 	}
-	if item.Status != StatusPaused {
+	// Accept paused items, and queued items without a goroutine (orphaned from cascade)
+	if item.Status != StatusPaused && !(item.Status == StatusQueued && m.cancels[id] == nil) {
 		m.mu.Unlock()
 		return fmt.Errorf("download not paused: %s", item.Status)
 	}
@@ -214,28 +214,19 @@ func (m *Manager) ResumeDownload(id string) error {
 	item.Status = StatusQueued
 	groupID := item.GroupID
 
-	// Re-queue other paused items in the same group
-	var toRequeue []*DownloadItem
+	// Mark other paused items in the same group as queued (visual only — no goroutines)
+	// They'll be picked up by autoResumeNext when slots free up
 	if groupID != "" {
 		for _, other := range m.downloads {
 			if other.ID != id && other.GroupID == groupID && other.Status == StatusPaused &&
 				other.DownloadURL != "" && other.Name != "" {
-				toRequeue = append(toRequeue, other)
+				other.Status = StatusQueued
 			}
 		}
-		// Sort by name so episodes queue in order
-		sort.Slice(toRequeue, func(i, j int) bool {
-			return strings.ToLower(toRequeue[i].Name) < strings.ToLower(toRequeue[j].Name)
-		})
 	}
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "resumed", Data: *item})
-
-	// Resume other paused group items so they queue up in episode order
-	for _, other := range toRequeue {
-		_ = m.ResumeDownload(other.ID)
-	}
 
 	go func() {
 		select {
@@ -808,10 +799,13 @@ func (m *Manager) autoResumeNext(groupID string) {
 		}
 	}
 
-	// Find paused candidates, preferring groups with zero active (starved)
+	// Find paused/queued candidates, preferring groups with zero active (starved)
+	// Queued items without a cancel func are "orphaned" from cascade and need a goroutine
 	var sameGroup, starved, fallback *DownloadItem
 	for _, item := range m.downloads {
-		if item.Status != StatusPaused || item.DownloadURL == "" || item.Name == "" {
+		isCandidate := (item.Status == StatusPaused || (item.Status == StatusQueued && m.cancels[item.ID] == nil)) &&
+			item.DownloadURL != "" && item.Name != ""
+		if !isCandidate {
 			continue
 		}
 		key := item.GroupID
