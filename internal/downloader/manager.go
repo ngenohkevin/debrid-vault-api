@@ -158,9 +158,32 @@ func (m *Manager) PauseDownload(id string) error {
 	item.Status = StatusPaused
 	item.Speed = 0
 	item.ETA = 0
+	groupID := item.GroupID
+
+	// Also pause all queued items in the same group so the user can choose which to resume
+	var queuedToPause []*DownloadItem
+	if groupID != "" {
+		for _, other := range m.downloads {
+			if other.ID != id && other.GroupID == groupID && other.Status == StatusQueued {
+				queuedToPause = append(queuedToPause, other)
+			}
+		}
+	}
+	for _, other := range queuedToPause {
+		if c, ok := m.cancels[other.ID]; ok {
+			c()
+			delete(m.cancels, other.ID)
+		}
+		other.Status = StatusPaused
+		other.Speed = 0
+		other.ETA = 0
+	}
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "paused", Data: *item})
+	for _, other := range queuedToPause {
+		m.emit(Event{Type: "paused", Data: *other})
+	}
 	m.saveHistory()
 	return nil
 }
@@ -193,13 +216,12 @@ func (m *Manager) ResumeDownload(id string) error {
 	m.emit(Event{Type: "resumed", Data: *item})
 
 	go func() {
-		m.sem <- struct{}{}
-		defer func() { <-m.sem }()
-
-		// Check if paused/cancelled while waiting in queue
-		if ctx.Err() != nil {
-			return
+		select {
+		case m.sem <- struct{}{}:
+		case <-ctx.Done():
+			return // paused/cancelled while queued
 		}
+		defer func() { <-m.sem }()
 
 		m.activeCount.Add(1)
 		defer m.activeCount.Add(-1)
@@ -393,7 +415,11 @@ func (m *Manager) AddDirectURL(downloadURL, name string, category Category) (*Do
 
 func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 	m.updateStatus(item, StatusQueued, "")
-	m.sem <- struct{}{}
+	select {
+	case m.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	defer func() { <-m.sem }()
 
 	m.updateStatus(item, StatusResolving, "")
@@ -469,7 +495,11 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 
 func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	m.updateStatus(item, StatusQueued, "")
-	m.sem <- struct{}{}
+	select {
+	case m.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	defer func() { <-m.sem }()
 
 	// Unrestrict the link directly (no ListDownloads scan)
