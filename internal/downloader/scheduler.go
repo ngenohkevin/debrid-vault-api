@@ -125,12 +125,18 @@ func (s *Scheduler) CancelSchedule(id string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("schedule not found: %s", id)
 	}
-	if sched.Status != ScheduleStatusScheduled {
+	if sched.Status != ScheduleStatusScheduled && sched.Status != ScheduleStatusRunning {
 		s.mu.Unlock()
-		return fmt.Errorf("schedule not in scheduled state: %s", sched.Status)
+		return fmt.Errorf("schedule not in cancellable state: %s", sched.Status)
 	}
+	downloadID := sched.DownloadID
 	sched.Status = ScheduleStatusCancelled
 	s.mu.Unlock()
+
+	// Cancel the underlying download if running
+	if downloadID != "" {
+		_ = s.manager.CancelDownload(downloadID)
+	}
 
 	s.saveSchedules()
 	return nil
@@ -138,13 +144,20 @@ func (s *Scheduler) CancelSchedule(id string) error {
 
 func (s *Scheduler) RemoveSchedule(id string) error {
 	s.mu.Lock()
-	_, ok := s.schedules[id]
+	sched, ok := s.schedules[id]
 	if !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("schedule not found: %s", id)
 	}
+	downloadID := sched.DownloadID
 	delete(s.schedules, id)
 	s.mu.Unlock()
+
+	// Cancel and clean up the underlying download if it exists
+	if downloadID != "" {
+		_ = s.manager.CancelDownload(downloadID)
+		_ = s.manager.RemoveDownload(downloadID)
+	}
 
 	s.saveSchedules()
 	return nil
