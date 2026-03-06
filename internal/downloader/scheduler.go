@@ -150,11 +150,12 @@ func (s *Scheduler) RemoveSchedule(id string) error {
 		return fmt.Errorf("schedule not found: %s", id)
 	}
 	downloadID := sched.DownloadID
+	status := sched.Status
 	delete(s.schedules, id)
 	s.mu.Unlock()
 
-	// Cancel and clean up the underlying download if it exists
-	if downloadID != "" {
+	// Only clean up the underlying download if the schedule hasn't completed
+	if downloadID != "" && status != ScheduleStatusCompleted {
 		_ = s.manager.CancelDownload(downloadID)
 		_ = s.manager.RemoveDownload(downloadID)
 	}
