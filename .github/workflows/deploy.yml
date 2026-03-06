@@ -80,6 +80,7 @@ jobs:
           fi
 
           chown ngenoh:ngenoh /home/ngenoh/dev/backend/debrid-vault/debrid-vault
+          chmod +x /home/ngenoh/dev/backend/debrid-vault/debrid-vault
           systemctl restart debrid-vault.service
           sleep 3
           curl -sf http://localhost:6501/health && echo " Backend deployed!" || echo " Health check failed"
