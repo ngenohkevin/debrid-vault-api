@@ -790,22 +790,61 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 	m.autoResumeNext(item.GroupID)
 }
 
-// autoResumeNext finds the next paused download (preferring same group) and resumes it.
+// autoResumeNext finds the next paused download and resumes it.
+// Prioritizes groups/singles that have zero active downloads (fairness),
+// then falls back to same group, then any paused item.
 func (m *Manager) autoResumeNext(groupID string) {
 	m.mu.RLock()
-	var candidate *DownloadItem
+
+	// Count active downloads per group/single
+	activePerGroup := make(map[string]int)
 	for _, item := range m.downloads {
-		if item.Status == StatusPaused && item.DownloadURL != "" && item.Name != "" {
-			if groupID != "" && item.GroupID != groupID {
-				continue // prefer same group
+		if item.Status == StatusDownloading || item.Status == StatusQueued || item.Status == StatusResolving || item.Status == StatusMoving {
+			key := item.GroupID
+			if key == "" {
+				key = item.ID // singles use their own ID
 			}
-			// Pick the earliest by name (episode order)
-			if candidate == nil || strings.ToLower(item.Name) < strings.ToLower(candidate.Name) {
-				candidate = item
+			activePerGroup[key]++
+		}
+	}
+
+	// Find paused candidates, preferring groups with zero active (starved)
+	var sameGroup, starved, fallback *DownloadItem
+	for _, item := range m.downloads {
+		if item.Status != StatusPaused || item.DownloadURL == "" || item.Name == "" {
+			continue
+		}
+		key := item.GroupID
+		if key == "" {
+			key = item.ID
+		}
+
+		if activePerGroup[key] == 0 {
+			// This group/single has nothing active — prioritize it
+			if starved == nil || strings.ToLower(item.Name) < strings.ToLower(starved.Name) {
+				starved = item
+			}
+		} else if groupID != "" && item.GroupID == groupID {
+			// Same group as the one that just freed a slot
+			if sameGroup == nil || strings.ToLower(item.Name) < strings.ToLower(sameGroup.Name) {
+				sameGroup = item
+			}
+		} else {
+			if fallback == nil || strings.ToLower(item.Name) < strings.ToLower(fallback.Name) {
+				fallback = item
 			}
 		}
 	}
 	m.mu.RUnlock()
+
+	// Pick: starved group first, then same group, then any
+	candidate := starved
+	if candidate == nil {
+		candidate = sameGroup
+	}
+	if candidate == nil {
+		candidate = fallback
+	}
 
 	if candidate != nil {
 		log.Printf("Auto-resuming next download: %s (%s)", candidate.ID, candidate.Name)
