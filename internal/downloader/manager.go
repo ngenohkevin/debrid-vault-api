@@ -241,6 +241,34 @@ func (m *Manager) ResumeDownload(id string) error {
 	return nil
 }
 
+func (m *Manager) RetryMove(id string) error {
+	m.mu.Lock()
+	item, exists := m.downloads[id]
+	if !exists {
+		m.mu.Unlock()
+		return fmt.Errorf("download not found: %s", id)
+	}
+	if item.Status != StatusError {
+		m.mu.Unlock()
+		return fmt.Errorf("download not in error state: %s", item.Status)
+	}
+	// Check that the file exists in staging
+	destPath := filepath.Join(m.cfg.DownloadDir, item.Name)
+	if _, err := os.Stat(destPath); err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("file not found in staging: %s", item.Name)
+	}
+
+	category := item.Category
+	folder := item.Folder
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancels[id] = cancel
+	m.mu.Unlock()
+
+	go m.moveToFinal(ctx, item, destPath, category, folder)
+	return nil
+}
+
 func (m *Manager) RemoveDownload(id string) error {
 	m.mu.Lock()
 	if cancel, ok := m.cancels[id]; ok {
@@ -613,25 +641,65 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 	}
 
 	finalPath := filepath.Join(finalDir, item.Name)
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
-		m.setError(item, fmt.Sprintf("Failed to create destination: %v", err))
-		return
-	}
 
-	// Try rename first (same filesystem), fallback to buffered copy with progress
-	if err := os.Rename(destPath, finalPath); err != nil {
-		if err := CopyFileBuffered(ctx, destPath, finalPath, func(copied, total int64) {
-			m.mu.Lock()
-			if total > 0 {
-				item.Progress = float64(copied) / float64(total)
-			}
-			m.mu.Unlock()
-			m.emit(Event{Type: "progress", Data: *item})
-		}); err != nil {
-			m.setError(item, fmt.Sprintf("Failed to move file: %v", err))
+	// Retry move with backoffs if destination is unavailable (e.g. external drive offline)
+	moveBackoffs := []time.Duration{10 * time.Second, 30 * time.Second, 1 * time.Minute, 2 * time.Minute, 5 * time.Minute}
+	var moveErr error
+	for attempt := 0; attempt <= len(moveBackoffs); attempt++ {
+		if ctx.Err() != nil {
 			return
 		}
-		os.Remove(destPath)
+
+		if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
+			moveErr = fmt.Errorf("create destination: %v", err)
+			if attempt < len(moveBackoffs) {
+				m.mu.Lock()
+				item.Error = fmt.Sprintf("Drive unavailable, retrying in %s... (%d/%d)", moveBackoffs[attempt], attempt+1, len(moveBackoffs))
+				m.mu.Unlock()
+				m.emit(Event{Type: "progress", Data: *item})
+				select {
+				case <-time.After(moveBackoffs[attempt]):
+				case <-ctx.Done():
+					return
+				}
+			}
+			continue
+		}
+
+		// Try rename first (same filesystem), fallback to buffered copy with progress
+		if err := os.Rename(destPath, finalPath); err != nil {
+			if err := CopyFileBuffered(ctx, destPath, finalPath, func(copied, total int64) {
+				m.mu.Lock()
+				if total > 0 {
+					item.Progress = float64(copied) / float64(total)
+				}
+				m.mu.Unlock()
+				m.emit(Event{Type: "progress", Data: *item})
+			}); err != nil {
+				moveErr = fmt.Errorf("move file: %v", err)
+				if attempt < len(moveBackoffs) {
+					m.mu.Lock()
+					item.Error = fmt.Sprintf("Move failed, retrying in %s... (%d/%d)", moveBackoffs[attempt], attempt+1, len(moveBackoffs))
+					m.mu.Unlock()
+					m.emit(Event{Type: "progress", Data: *item})
+					select {
+					case <-time.After(moveBackoffs[attempt]):
+					case <-ctx.Done():
+						return
+					}
+				}
+				continue
+			}
+			os.Remove(destPath)
+		}
+
+		moveErr = nil
+		break
+	}
+
+	if moveErr != nil {
+		m.setError(item, fmt.Sprintf("Failed to move file (drive offline?): %v — file saved in staging", moveErr))
+		return
 	}
 
 	now := time.Now()

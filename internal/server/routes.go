@@ -33,6 +33,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.DELETE("/downloads/:id/remove", s.removeDownload)
 		api.POST("/downloads/:id/pause", s.pauseDownload)
 		api.POST("/downloads/:id/resume", s.resumeDownload)
+		api.POST("/downloads/:id/retry-move", s.retryMove)
 
 		// Schedules
 		api.GET("/schedules", s.listSchedules)
@@ -368,6 +369,14 @@ func (s *Server) resumeDownload(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "resumed"})
+}
+
+func (s *Server) retryMove(c *gin.Context) {
+	if err := s.dlManager.RetryMove(c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "retrying move"})
 }
 
 func (s *Server) getSettings(c *gin.Context) {
