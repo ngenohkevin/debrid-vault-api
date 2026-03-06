@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -222,12 +223,16 @@ func (m *Manager) ResumeDownload(id string) error {
 				toRequeue = append(toRequeue, other)
 			}
 		}
+		// Sort by name so episodes queue in order
+		sort.Slice(toRequeue, func(i, j int) bool {
+			return strings.ToLower(toRequeue[i].Name) < strings.ToLower(toRequeue[j].Name)
+		})
 	}
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "resumed", Data: *item})
 
-	// Resume other paused group items so they queue up
+	// Resume other paused group items so they queue up in episode order
 	for _, other := range toRequeue {
 		_ = m.ResumeDownload(other.ID)
 	}
@@ -791,12 +796,11 @@ func (m *Manager) autoResumeNext(groupID string) {
 	var candidate *DownloadItem
 	for _, item := range m.downloads {
 		if item.Status == StatusPaused && item.DownloadURL != "" && item.Name != "" {
-			// Prefer same group
-			if groupID != "" && item.GroupID == groupID {
-				candidate = item
-				break
+			if groupID != "" && item.GroupID != groupID {
+				continue // prefer same group
 			}
-			if candidate == nil {
+			// Pick the earliest by name (episode order)
+			if candidate == nil || strings.ToLower(item.Name) < strings.ToLower(candidate.Name) {
 				candidate = item
 			}
 		}
