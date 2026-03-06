@@ -40,6 +40,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		// Library
 		api.GET("/library", s.listLibrary)
 		api.GET("/library/search", s.searchLibrary)
+		api.POST("/library/move", s.moveMedia)
 		api.DELETE("/library/*path", s.deleteMedia)
 	}
 }
@@ -264,6 +265,23 @@ func (s *Server) searchLibrary(c *gin.Context) {
 		files = []media.MediaFile{}
 	}
 	c.JSON(http.StatusOK, files)
+}
+
+func (s *Server) moveMedia(c *gin.Context) {
+	var req struct {
+		Path     string `json:"path" binding:"required"`
+		Category string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	newPath, err := s.library.MoveMedia(req.Path, req.Category)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "moved", "newPath": newPath})
 }
 
 func (s *Server) deleteMedia(c *gin.Context) {

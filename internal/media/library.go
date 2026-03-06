@@ -94,6 +94,43 @@ func (l *Library) DeleteMedia(path string) error {
 	return os.RemoveAll(absPath)
 }
 
+func (l *Library) MoveMedia(path string, toCategory string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid path")
+	}
+	moviesAbs, _ := filepath.Abs(l.cfg.MoviesDir)
+	tvAbs, _ := filepath.Abs(l.cfg.TVShowsDir)
+
+	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) {
+		return "", fmt.Errorf("path not in media directories")
+	}
+
+	var destDir string
+	switch toCategory {
+	case "movies":
+		destDir = l.cfg.MoviesDir
+	case "tv-shows":
+		destDir = l.cfg.TVShowsDir
+	default:
+		return "", fmt.Errorf("invalid category: %s", toCategory)
+	}
+
+	name := filepath.Base(absPath)
+	destPath := filepath.Join(destDir, name)
+
+	// Don't move to same location
+	if absPath == destPath {
+		return "", fmt.Errorf("file is already in %s", toCategory)
+	}
+
+	if err := os.Rename(absPath, destPath); err != nil {
+		return "", fmt.Errorf("failed to move: %w", err)
+	}
+
+	return destPath, nil
+}
+
 func (l *Library) GetStorageInfo() (*StorageInfo, error) {
 	nvme, err := getDiskUsage(l.cfg.DownloadDir)
 	if err != nil {
