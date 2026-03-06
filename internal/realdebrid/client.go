@@ -7,14 +7,25 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 const baseURL = "https://api.real-debrid.com/rest/1.0"
 
+type cacheEntry[T any] struct {
+	data      T
+	expiresAt time.Time
+}
+
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+
+	mu            sync.RWMutex
+	torrentsCache *cacheEntry[[]Torrent]
+	infoCache     map[string]*cacheEntry[Torrent]
+	cacheTTL      time.Duration
 }
 
 func NewClient(apiKey string) *Client {
@@ -23,7 +34,22 @@ func NewClient(apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		infoCache: make(map[string]*cacheEntry[Torrent]),
+		cacheTTL:  5 * time.Minute,
 	}
+}
+
+func (c *Client) InvalidateCache() {
+	c.mu.Lock()
+	c.torrentsCache = nil
+	c.infoCache = make(map[string]*cacheEntry[Torrent])
+	c.mu.Unlock()
+}
+
+func (c *Client) InvalidateTorrentInfo(id string) {
+	c.mu.Lock()
+	delete(c.infoCache, id)
+	c.mu.Unlock()
 }
 
 func (c *Client) doRequest(method, path string, body io.Reader, contentType string) ([]byte, error) {
@@ -80,21 +106,53 @@ func (c *Client) GetUser() (*User, error) {
 }
 
 func (c *Client) ListTorrents() ([]Torrent, error) {
+	c.mu.RLock()
+	if c.torrentsCache != nil && time.Now().Before(c.torrentsCache.expiresAt) {
+		result := c.torrentsCache.data
+		c.mu.RUnlock()
+		return result, nil
+	}
+	c.mu.RUnlock()
+
 	data, err := c.get("/torrents")
 	if err != nil {
 		return nil, err
 	}
 	var torrents []Torrent
-	return torrents, json.Unmarshal(data, &torrents)
+	if err := json.Unmarshal(data, &torrents); err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	c.torrentsCache = &cacheEntry[[]Torrent]{data: torrents, expiresAt: time.Now().Add(c.cacheTTL)}
+	c.mu.Unlock()
+
+	return torrents, nil
 }
 
 func (c *Client) GetTorrentInfo(id string) (*Torrent, error) {
+	c.mu.RLock()
+	if entry, ok := c.infoCache[id]; ok && time.Now().Before(entry.expiresAt) {
+		result := entry.data
+		c.mu.RUnlock()
+		return &result, nil
+	}
+	c.mu.RUnlock()
+
 	data, err := c.get("/torrents/info/" + id)
 	if err != nil {
 		return nil, err
 	}
 	var torrent Torrent
-	return &torrent, json.Unmarshal(data, &torrent)
+	if err := json.Unmarshal(data, &torrent); err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	c.infoCache[id] = &cacheEntry[Torrent]{data: torrent, expiresAt: time.Now().Add(c.cacheTTL)}
+	c.mu.Unlock()
+
+	return &torrent, nil
 }
 
 func (c *Client) AddMagnet(magnet string) (*AddMagnetResponse, error) {

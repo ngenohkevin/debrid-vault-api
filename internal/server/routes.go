@@ -36,6 +36,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.GET("/rd/downloads", s.getRDDownloads)
 		api.GET("/rd/torrents", s.getRDTorrents)
 		api.GET("/rd/torrents/:id", s.getRDTorrentInfo)
+		api.POST("/rd/cache/invalidate", s.invalidateRDCache)
 		api.POST("/rd/unrestrict", s.unrestrictLink)
 
 		// Library
@@ -245,6 +246,11 @@ func (s *Server) getRDTorrentInfo(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, torrent)
+}
+
+func (s *Server) invalidateRDCache(c *gin.Context) {
+	s.rdClient.InvalidateCache()
+	c.JSON(http.StatusOK, gin.H{"status": "cache invalidated"})
 }
 
 func (s *Server) unrestrictLink(c *gin.Context) {
