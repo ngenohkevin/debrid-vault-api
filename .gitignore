@@ -1,4 +1,5 @@
 bin/
+debrid-vault
 .env
 .env.local
 *.exe
