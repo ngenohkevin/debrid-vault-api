@@ -74,7 +74,7 @@ func (s *Server) getStatus(c *gin.Context) {
 	downloads := s.dlManager.GetDownloads()
 	active := 0
 	for _, d := range downloads {
-		if d.Status == downloader.StatusDownloading || d.Status == downloader.StatusResolving || d.Status == downloader.StatusMoving {
+		if d.Status == downloader.StatusDownloading || d.Status == downloader.StatusResolving || d.Status == downloader.StatusMoving || d.Status == downloader.StatusQueued {
 			active++
 		}
 	}

@@ -55,7 +55,7 @@ func (m *Manager) Shutdown() {
 	for id, cancel := range m.cancels {
 		cancel()
 		if item, ok := m.downloads[id]; ok {
-			if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusMoving {
+			if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusMoving || item.Status == StatusQueued {
 				// Mark as paused so loadHistory can auto-resume on restart
 				item.Status = StatusPaused
 				item.Speed = 0
@@ -126,7 +126,7 @@ func (m *Manager) CancelDownload(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("download not found: %s", id)
 	}
-	if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusPending {
+	if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusPending || item.Status == StatusQueued {
 		item.Status = StatusCancelled
 	}
 	name := item.Name
@@ -147,9 +147,9 @@ func (m *Manager) PauseDownload(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("download not found: %s", id)
 	}
-	if item.Status != StatusDownloading {
+	if item.Status != StatusDownloading && item.Status != StatusQueued {
 		m.mu.Unlock()
-		return fmt.Errorf("download not in downloading state: %s", item.Status)
+		return fmt.Errorf("download not in pausable state: %s", item.Status)
 	}
 	if ok {
 		cancel()
@@ -384,6 +384,7 @@ func (m *Manager) AddDirectURL(downloadURL, name string, category Category) (*Do
 }
 
 func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
+	m.updateStatus(item, StatusQueued, "")
 	m.sem <- struct{}{}
 	defer func() { <-m.sem }()
 
@@ -459,6 +460,7 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 }
 
 func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
+	m.updateStatus(item, StatusQueued, "")
 	m.sem <- struct{}{}
 	defer func() { <-m.sem }()
 
@@ -791,8 +793,8 @@ func (m *Manager) loadHistory() {
 			item.Error = "interrupted by restart"
 			item.Speed = 0
 		}
-		if item.Status == StatusResolving || item.Status == StatusPending {
-			// Resolving/pending can't be resumed (no download URL yet)
+		if item.Status == StatusResolving || item.Status == StatusPending || item.Status == StatusQueued {
+			// Resolving/pending/queued can't be resumed (no download URL yet)
 			item.Status = StatusError
 			item.Error = "interrupted by restart"
 			item.Speed = 0
@@ -849,7 +851,7 @@ func (m *Manager) cleanStaleStagingFiles() {
 	for _, item := range m.downloads {
 		if item.Status == StatusDownloading || item.Status == StatusPaused ||
 			item.Status == StatusMoving || item.Status == StatusResolving ||
-			item.Status == StatusPending {
+			item.Status == StatusPending || item.Status == StatusQueued {
 			if item.Name != "" {
 				expected[item.Name] = true
 				expected[item.Name+".part"] = true
