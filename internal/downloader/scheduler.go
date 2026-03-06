@@ -303,6 +303,7 @@ func (s *Scheduler) restoreLimit() {
 
 	s.manager.engine.SetSpeedLimit(prev)
 	s.manager.cfg.SpeedLimitMbps = prev
+	s.manager.cfg.SaveSettings()
 	log.Printf("Speed limit restored to %.0f Mbps", prev)
 }
 

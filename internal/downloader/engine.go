@@ -113,7 +113,9 @@ func (e *DownloadEngine) Download(ctx context.Context, url, destPath string, num
 
 	// Try to load existing .part file for resume
 	pf, loaded := e.loadPartFile(partPath)
-	if loaded && pf.URL == url && pf.TotalSize == totalSize && pf.RangeOK == rangeOK {
+	if loaded && pf.TotalSize == totalSize && pf.RangeOK == rangeOK {
+		// URL may have changed (RD re-unrestrict), update it
+		pf.URL = url
 		log.Printf("Resuming download from .part file: %s", partPath)
 	} else {
 		// Fresh download

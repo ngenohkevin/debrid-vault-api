@@ -389,6 +389,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	if req.SpeedLimitMbps != nil {
 		s.cfg.SpeedLimitMbps = *req.SpeedLimitMbps
 		s.dlManager.Engine().SetSpeedLimit(*req.SpeedLimitMbps)
+		s.cfg.SaveSettings()
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"maxConcurrentDownloads": s.cfg.MaxConcurrentDownloads,

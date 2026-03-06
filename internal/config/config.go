@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -18,8 +20,13 @@ type Config struct {
 	SpeedLimitMbps         float64
 }
 
+// persistedSettings is the subset of config saved to disk.
+type persistedSettings struct {
+	SpeedLimitMbps float64 `json:"speedLimitMbps"`
+}
+
 func Load() *Config {
-	return &Config{
+	cfg := &Config{
 		Port:                   getEnv("PORT", "6501"),
 		RDApiKey:               getEnv("RD_API_KEY", ""),
 		DownloadDir:            getEnv("DOWNLOAD_DIR", "/home/ngenoh/downloads/staging"),
@@ -31,6 +38,38 @@ func Load() *Config {
 		MaxSegmentsPerFile:     getEnvInt("MAX_SEGMENTS_PER_FILE", 8),
 		SpeedLimitMbps:         getEnvFloat("SPEED_LIMIT_MBPS", 0),
 	}
+	cfg.loadPersistedSettings()
+	return cfg
+}
+
+func (c *Config) settingsPath() string {
+	return filepath.Join(c.DownloadDir, ".settings.json")
+}
+
+func (c *Config) loadPersistedSettings() {
+	data, err := os.ReadFile(c.settingsPath())
+	if err != nil {
+		return
+	}
+	var s persistedSettings
+	if json.Unmarshal(data, &s) == nil {
+		if s.SpeedLimitMbps > 0 {
+			c.SpeedLimitMbps = s.SpeedLimitMbps
+		}
+	}
+}
+
+// SaveSettings persists user-configurable settings to disk.
+func (c *Config) SaveSettings() {
+	s := persistedSettings{
+		SpeedLimitMbps: c.SpeedLimitMbps,
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(c.settingsPath()), 0755)
+	_ = os.WriteFile(c.settingsPath(), data, 0644)
 }
 
 func getEnv(key, fallback string) string {
