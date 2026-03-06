@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -67,11 +68,20 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) AddSchedule(name, source string, category Category, folder string, scheduledAt time.Time, speedLimitMbps float64) *ScheduledDownload {
-	// Extract name from magnet URI if not provided
-	if name == "" && strings.HasPrefix(source, "magnet:") {
-		if u, err := url.Parse(source); err == nil {
-			if dn := u.Query().Get("dn"); dn != "" {
-				name = dn
+	// Extract name from source if not provided
+	if name == "" {
+		if strings.HasPrefix(source, "magnet:") {
+			if u, err := url.Parse(source); err == nil {
+				if dn := u.Query().Get("dn"); dn != "" {
+					name = dn
+				}
+			}
+		} else if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+			if u, err := url.Parse(source); err == nil {
+				base := path.Base(u.Path)
+				if base != "" && base != "." && base != "/" {
+					name = base
+				}
 			}
 		}
 	}
