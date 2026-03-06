@@ -334,35 +334,60 @@ func (s *Scheduler) loadSchedules() {
 	for i := range items {
 		item := items[i]
 		if item.Status == ScheduleStatusRunning {
-			// Mark as scheduled so retryInterrupted can re-execute
-			item.Status = ScheduleStatusScheduled
-			item.Error = ""
-			item.ScheduledAt = time.Now()
+			item.Status = ScheduleStatusRunning // keep as running for retryInterrupted
 		}
 		s.schedules[item.ID] = &item
 	}
 }
 
-// retryInterrupted re-executes schedules that were running when the service restarted.
+// retryInterrupted handles schedules that were running when the service restarted.
+// If the download is already being auto-resumed by the manager, just watch it.
+// Otherwise, re-execute from scratch.
 func (s *Scheduler) retryInterrupted() {
 	s.mu.RLock()
-	var due []*ScheduledDownload
+	var interrupted []*ScheduledDownload
 	for _, sched := range s.schedules {
-		if sched.Status == ScheduleStatusScheduled && !sched.ScheduledAt.After(time.Now()) {
-			due = append(due, sched)
+		if sched.Status == ScheduleStatusRunning {
+			interrupted = append(interrupted, sched)
 		}
 	}
 	s.mu.RUnlock()
 
-	if len(due) == 0 {
+	if len(interrupted) == 0 {
 		return
 	}
 
-	// Delay to let the server fully start
+	// Delay to let the manager's auto-resume finish first
 	go func() {
-		time.Sleep(10 * time.Second)
-		for _, sched := range due {
+		time.Sleep(12 * time.Second)
+		for _, sched := range interrupted {
+			// Check if the manager already has and is resuming this download
+			if sched.DownloadID != "" {
+				if dl, err := s.manager.GetDownload(sched.DownloadID); err == nil {
+					// Download exists — just watch it instead of creating a new one
+					log.Printf("Schedule %s: download %s already resuming (status: %s), watching", sched.ID, sched.DownloadID, dl.Status)
+
+					// Apply speed limit if needed
+					if sched.SpeedLimitMbps > 0 {
+						s.prevLimitMu.Lock()
+						s.prevLimit = s.manager.cfg.SpeedLimitMbps
+						s.prevLimitMu.Unlock()
+						s.manager.engine.SetSpeedLimit(sched.SpeedLimitMbps)
+						s.manager.cfg.SpeedLimitMbps = sched.SpeedLimitMbps
+					}
+
+					go s.watchDownload(sched, sched.DownloadID)
+					s.saveSchedules()
+					continue
+				}
+			}
+
+			// No existing download — re-execute from scratch
 			log.Printf("Re-executing interrupted schedule: %s", sched.ID)
+			s.mu.Lock()
+			sched.Status = ScheduleStatusScheduled
+			sched.Error = ""
+			s.mu.Unlock()
 			s.executeSchedule(sched)
 		}
 	}()
