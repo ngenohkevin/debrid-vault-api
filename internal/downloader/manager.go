@@ -129,9 +129,13 @@ func (m *Manager) CancelDownload(id string) error {
 	if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusPending {
 		item.Status = StatusCancelled
 	}
+	name := item.Name
 	m.mu.Unlock()
 	m.emit(Event{Type: "cancelled", Data: *item})
 	m.saveHistory()
+
+	// Clean up staging files
+	m.cleanStagingFile(name)
 	return nil
 }
 
@@ -275,14 +279,18 @@ func (m *Manager) RemoveDownload(id string) error {
 		cancel()
 		delete(m.cancels, id)
 	}
-	_, exists := m.downloads[id]
+	item, exists := m.downloads[id]
 	if !exists {
 		m.mu.Unlock()
 		return fmt.Errorf("download not found: %s", id)
 	}
+	name := item.Name
 	delete(m.downloads, id)
 	m.mu.Unlock()
 	m.saveHistory()
+
+	// Clean up staging files
+	m.cleanStagingFile(name)
 	return nil
 }
 
@@ -809,6 +817,21 @@ func (m *Manager) loadHistory() {
 				}
 			}
 		}()
+	}
+}
+
+// cleanStagingFile removes a specific file and its .part file from the staging directory.
+func (m *Manager) cleanStagingFile(name string) {
+	if name == "" {
+		return
+	}
+	staging := filepath.Join(m.cfg.DownloadDir, name)
+	partFile := staging + ".part"
+	if err := os.Remove(staging); err == nil {
+		log.Printf("Cleaned staging file: %s", name)
+	}
+	if err := os.Remove(partFile); err == nil {
+		log.Printf("Cleaned part file: %s.part", name)
 	}
 }
 
