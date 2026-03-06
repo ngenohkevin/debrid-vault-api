@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +67,14 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) AddSchedule(name, source string, category Category, folder string, scheduledAt time.Time, speedLimitMbps float64) *ScheduledDownload {
+	// Extract name from magnet URI if not provided
+	if name == "" && strings.HasPrefix(source, "magnet:") {
+		if u, err := url.Parse(source); err == nil {
+			if dn := u.Query().Get("dn"); dn != "" {
+				name = dn
+			}
+		}
+	}
 	sched := &ScheduledDownload{
 		ID:             uuid.New().String()[:8],
 		Name:           name,
