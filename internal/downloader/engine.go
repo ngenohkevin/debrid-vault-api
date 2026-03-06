@@ -353,8 +353,6 @@ func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File,
 	buf := *bufPtr
 	defer e.bufPool.Put(bufPtr)
 
-	limiter := e.getLimiter()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -364,9 +362,9 @@ func (e *DownloadEngine) downloadSegmentOnce(ctx context.Context, file *os.File,
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			// Rate limit
-			if limiter != nil {
-				if err := limiter.WaitN(ctx, n); err != nil {
+			// Rate limit — re-fetch each iteration so runtime changes take effect
+			if lim := e.getLimiter(); lim != nil {
+				if err := lim.WaitN(ctx, n); err != nil {
 					return err
 				}
 			}
@@ -434,8 +432,6 @@ func (e *DownloadEngine) downloadSingle(ctx context.Context, url, destPath, part
 	saveTicker := time.NewTicker(partSaveInterval)
 	defer saveTicker.Stop()
 
-	limiter := e.getLimiter()
-
 	// Rolling speed samples
 	type sample struct {
 		bytes int64
@@ -463,8 +459,9 @@ func (e *DownloadEngine) downloadSingle(ctx context.Context, url, destPath, part
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if limiter != nil {
-				if err := limiter.WaitN(ctx, n); err != nil {
+			// Rate limit — re-fetch each iteration so runtime changes take effect
+			if lim := e.getLimiter(); lim != nil {
+				if err := lim.WaitN(ctx, n); err != nil {
 					return err
 				}
 			}
