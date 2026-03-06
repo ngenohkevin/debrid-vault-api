@@ -408,6 +408,7 @@ func (s *Server) listSchedules(c *gin.Context) {
 
 func (s *Server) createSchedule(c *gin.Context) {
 	var req struct {
+		Name           string              `json:"name"`
 		Source         string              `json:"source" binding:"required"`
 		Category       downloader.Category `json:"category" binding:"required"`
 		Folder         string              `json:"folder"`
@@ -436,6 +437,7 @@ func (s *Server) createSchedule(c *gin.Context) {
 	}
 
 	sched := s.scheduler.AddSchedule(
+		strings.TrimSpace(req.Name),
 		strings.TrimSpace(req.Source),
 		req.Category,
 		strings.TrimSpace(req.Folder),

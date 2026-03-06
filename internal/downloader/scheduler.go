@@ -25,6 +25,7 @@ const (
 
 type ScheduledDownload struct {
 	ID             string         `json:"id"`
+	Name           string         `json:"name,omitempty"`
 	Source         string         `json:"source"`
 	Category       Category       `json:"category"`
 	Folder         string         `json:"folder,omitempty"`
@@ -63,9 +64,10 @@ func (s *Scheduler) Stop() {
 	close(s.stopCh)
 }
 
-func (s *Scheduler) AddSchedule(source string, category Category, folder string, scheduledAt time.Time, speedLimitMbps float64) *ScheduledDownload {
+func (s *Scheduler) AddSchedule(name, source string, category Category, folder string, scheduledAt time.Time, speedLimitMbps float64) *ScheduledDownload {
 	sched := &ScheduledDownload{
 		ID:             uuid.New().String()[:8],
+		Name:           name,
 		Source:         source,
 		Category:       category,
 		Folder:         folder,
