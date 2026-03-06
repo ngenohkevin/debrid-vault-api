@@ -38,6 +38,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.GET("/schedules", s.listSchedules)
 		api.POST("/schedules", s.createSchedule)
 		api.GET("/schedules/:id", s.getSchedule)
+		api.PUT("/schedules/:id", s.updateSchedule)
 		api.DELETE("/schedules/:id", s.cancelSchedule)
 		api.DELETE("/schedules/:id/remove", s.removeSchedule)
 
@@ -451,6 +452,38 @@ func (s *Server) getSchedule(c *gin.Context) {
 	sched, err := s.scheduler.GetSchedule(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sched)
+}
+
+func (s *Server) updateSchedule(c *gin.Context) {
+	var req struct {
+		ScheduledAt    *string  `json:"scheduledAt"`
+		SpeedLimitMbps *float64 `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var scheduledAt *time.Time
+	if req.ScheduledAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.ScheduledAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be RFC3339 format"})
+			return
+		}
+		if t.Before(time.Now()) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be in the future"})
+			return
+		}
+		scheduledAt = &t
+	}
+
+	sched, err := s.scheduler.UpdateSchedule(c.Param("id"), scheduledAt, req.SpeedLimitMbps)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, sched)

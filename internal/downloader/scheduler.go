@@ -87,6 +87,37 @@ func (s *Scheduler) AddSchedule(name, source string, category Category, folder s
 	return sched
 }
 
+func (s *Scheduler) UpdateSchedule(id string, scheduledAt *time.Time, speedLimitMbps *float64) (*ScheduledDownload, error) {
+	s.mu.Lock()
+	sched, ok := s.schedules[id]
+	if !ok {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("schedule not found: %s", id)
+	}
+	// Allow editing scheduled or errored schedules (reschedule)
+	if sched.Status != ScheduleStatusScheduled && sched.Status != ScheduleStatusError {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("cannot edit schedule in %s state", sched.Status)
+	}
+	if scheduledAt != nil {
+		sched.ScheduledAt = *scheduledAt
+	}
+	if speedLimitMbps != nil {
+		sched.SpeedLimitMbps = *speedLimitMbps
+	}
+	// Reset to scheduled if it was errored (reschedule)
+	if sched.Status == ScheduleStatusError {
+		sched.Status = ScheduleStatusScheduled
+		sched.Error = ""
+	}
+	cp := *sched
+	s.mu.Unlock()
+
+	s.saveSchedules()
+	log.Printf("Schedule updated: %s at %s (limit: %.0f Mbps)", id, cp.ScheduledAt.Format(time.RFC3339), cp.SpeedLimitMbps)
+	return &cp, nil
+}
+
 func (s *Scheduler) CancelSchedule(id string) error {
 	s.mu.Lock()
 	sched, ok := s.schedules[id]
