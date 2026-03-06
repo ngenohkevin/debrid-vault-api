@@ -194,11 +194,16 @@ func (s *Server) removeDownload(c *gin.Context) {
 
 func (s *Server) downloadEvents(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", "no-cache, no-store, no-transform, must-revalidate")
 	c.Header("X-Accel-Buffering", "no")
+	c.Header("X-Content-Type-Options", "nosniff")
 
 	ch := s.dlManager.Subscribe()
 	defer s.dlManager.Unsubscribe(ch)
+
+	// Heartbeat every 30s to keep Cloudflare from timing out (100s idle limit)
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
 
 	c.Stream(func(w io.Writer) bool {
 		select {
@@ -208,6 +213,9 @@ func (s *Server) downloadEvents(c *gin.Context) {
 			}
 			data, _ := json.Marshal(event)
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			return true
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": heartbeat\n\n")
 			return true
 		case <-c.Request.Context().Done():
 			return false
