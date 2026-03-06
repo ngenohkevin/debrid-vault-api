@@ -187,7 +187,7 @@ func (m *Manager) ResumeDownload(id string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[id] = cancel
-	item.Status = StatusDownloading
+	item.Status = StatusQueued
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "resumed", Data: *item})
@@ -195,8 +195,16 @@ func (m *Manager) ResumeDownload(id string) error {
 	go func() {
 		m.sem <- struct{}{}
 		defer func() { <-m.sem }()
+
+		// Check if paused/cancelled while waiting in queue
+		if ctx.Err() != nil {
+			return
+		}
+
 		m.activeCount.Add(1)
 		defer m.activeCount.Add(-1)
+
+		m.updateStatus(item, StatusDownloading, "")
 
 		// Try to re-unrestrict to get a fresh URL
 		if strings.Contains(source, "real-debrid.com/d/") || !strings.HasPrefix(downloadURL, "http") {
