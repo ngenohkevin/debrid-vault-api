@@ -703,27 +703,10 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 
 	finalPath := filepath.Join(finalDir, item.Name)
 
-	// Skip move if file already exists at destination with matching size
-	if info, err := os.Stat(finalPath); err == nil {
-		stagingInfo, serr := os.Stat(destPath)
-		if serr == nil && info.Size() == stagingInfo.Size() {
-			log.Printf("File already exists at destination (same size), skipping move: %s", finalPath)
-			os.Remove(destPath)
-			os.Remove(destPath + ".part")
-			now := time.Now()
-			m.mu.Lock()
-			item.Status = StatusCompleted
-			item.Progress = 1.0
-			item.FilePath = finalPath
-			item.CompletedAt = &now
-			item.Speed = 0
-			item.ETA = 0
-			m.mu.Unlock()
-			m.emit(Event{Type: "completed", Data: *item})
-			m.saveHistory()
-			m.autoResumeNext(item.GroupID)
-			return
-		}
+	// Remove existing destination file if present (may be corrupt from interrupted move)
+	if fileExists(finalPath) {
+		log.Printf("Destination file already exists, overwriting: %s", finalPath)
+		os.Remove(finalPath)
 	}
 
 	// Retry move with backoffs if destination is unavailable (e.g. external drive offline)
