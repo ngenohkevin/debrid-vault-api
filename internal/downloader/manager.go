@@ -211,9 +211,26 @@ func (m *Manager) ResumeDownload(id string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[id] = cancel
 	item.Status = StatusQueued
+	groupID := item.GroupID
+
+	// Re-queue other paused items in the same group
+	var toRequeue []*DownloadItem
+	if groupID != "" {
+		for _, other := range m.downloads {
+			if other.ID != id && other.GroupID == groupID && other.Status == StatusPaused &&
+				other.DownloadURL != "" && other.Name != "" {
+				toRequeue = append(toRequeue, other)
+			}
+		}
+	}
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "resumed", Data: *item})
+
+	// Resume other paused group items so they queue up
+	for _, other := range toRequeue {
+		_ = m.ResumeDownload(other.ID)
+	}
 
 	go func() {
 		select {
