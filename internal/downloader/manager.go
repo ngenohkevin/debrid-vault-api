@@ -898,9 +898,28 @@ func (m *Manager) loadHistory() {
 	}
 
 	var toResume []*DownloadItem
+	var toMove []*DownloadItem
 	for i := range items {
 		item := items[i]
-		if item.Status == StatusDownloading || item.Status == StatusMoving {
+		if item.Status == StatusMoving {
+			// Was moving when interrupted — check if file exists in staging
+			stagingPath := filepath.Join(m.cfg.DownloadDir, item.Name)
+			if item.Name != "" && fileExists(stagingPath) {
+				item.Speed = 0
+				item.ETA = 0
+				item.Error = ""
+				m.downloads[item.ID] = &item
+				toMove = append(toMove, m.downloads[item.ID])
+				continue
+			}
+			// File gone from staging — mark as error
+			item.Status = StatusError
+			item.Error = "interrupted by restart, staging file missing"
+			item.Speed = 0
+			m.downloads[item.ID] = &item
+			continue
+		}
+		if item.Status == StatusDownloading {
 			// Has a download URL and a .part file may exist — auto-resume
 			if item.DownloadURL != "" && item.Name != "" {
 				item.Status = StatusPaused
@@ -931,6 +950,24 @@ func (m *Manager) loadHistory() {
 		m.downloads[item.ID] = &item
 	}
 
+	// Auto-resume interrupted moves after a short delay
+	if len(toMove) > 0 {
+		go func() {
+			time.Sleep(2 * time.Second)
+			for _, item := range toMove {
+				log.Printf("Auto-resuming interrupted move: %s (%s)", item.ID, item.Name)
+				ctx := context.Background()
+				destPath := filepath.Join(m.cfg.DownloadDir, item.Name)
+				m.sem <- struct{}{}
+				m.activeCount.Add(1)
+				go func(item *DownloadItem, destPath string) {
+					defer func() { <-m.sem; m.activeCount.Add(-1) }()
+					m.moveToFinal(ctx, item, destPath, item.Category, item.Folder)
+				}(item, destPath)
+			}
+		}()
+	}
+
 	// Auto-resume interrupted downloads after a short delay (let the server fully start)
 	if len(toResume) > 0 {
 		go func() {
@@ -943,6 +980,11 @@ func (m *Manager) loadHistory() {
 			}
 		}()
 	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // cleanStagingFile removes a specific file and its .part file from the staging directory.
