@@ -733,6 +733,33 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 	m.emit(Event{Type: "completed", Data: *item})
 	m.saveHistory()
 	log.Printf("Download complete: %s -> %s", item.Name, finalPath)
+
+	// Auto-resume next paused download in the same group
+	m.autoResumeNext(item.GroupID)
+}
+
+// autoResumeNext finds the next paused download (preferring same group) and resumes it.
+func (m *Manager) autoResumeNext(groupID string) {
+	m.mu.RLock()
+	var candidate *DownloadItem
+	for _, item := range m.downloads {
+		if item.Status == StatusPaused && item.DownloadURL != "" && item.Name != "" {
+			// Prefer same group
+			if groupID != "" && item.GroupID == groupID {
+				candidate = item
+				break
+			}
+			if candidate == nil {
+				candidate = item
+			}
+		}
+	}
+	m.mu.RUnlock()
+
+	if candidate != nil {
+		log.Printf("Auto-resuming next download: %s (%s)", candidate.ID, candidate.Name)
+		_ = m.ResumeDownload(candidate.ID)
+	}
 }
 
 func (m *Manager) updateStatus(item *DownloadItem, status Status, errMsg string) {
@@ -750,10 +777,14 @@ func (m *Manager) setError(item *DownloadItem, errMsg string) {
 	item.Status = StatusError
 	item.Error = errMsg
 	item.Speed = 0
+	groupID := item.GroupID
 	m.mu.Unlock()
 	m.emit(Event{Type: "error", Data: *item})
 	m.saveHistory()
 	log.Printf("Download error [%s]: %s", item.ID, errMsg)
+
+	// Auto-resume next paused download
+	m.autoResumeNext(groupID)
 }
 
 func (m *Manager) saveHistory() {
