@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
@@ -30,6 +31,19 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.GET("/downloads/:id", s.getDownload)
 		api.DELETE("/downloads/:id", s.cancelDownload)
 		api.DELETE("/downloads/:id/remove", s.removeDownload)
+		api.POST("/downloads/:id/pause", s.pauseDownload)
+		api.POST("/downloads/:id/resume", s.resumeDownload)
+
+		// Schedules
+		api.GET("/schedules", s.listSchedules)
+		api.POST("/schedules", s.createSchedule)
+		api.GET("/schedules/:id", s.getSchedule)
+		api.DELETE("/schedules/:id", s.cancelSchedule)
+		api.DELETE("/schedules/:id/remove", s.removeSchedule)
+
+		// Settings
+		api.GET("/settings", s.getSettings)
+		api.PUT("/settings", s.updateSettings)
 
 		// Real-Debrid
 		api.GET("/rd/user", s.getRDUser)
@@ -329,6 +343,123 @@ func (s *Server) deleteMedia(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func (s *Server) pauseDownload(c *gin.Context) {
+	if err := s.dlManager.PauseDownload(c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "paused"})
+}
+
+func (s *Server) resumeDownload(c *gin.Context) {
+	if err := s.dlManager.ResumeDownload(c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "resumed"})
+}
+
+func (s *Server) getSettings(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"maxConcurrentDownloads": s.cfg.MaxConcurrentDownloads,
+		"maxSegmentsPerFile":     s.cfg.MaxSegmentsPerFile,
+		"speedLimitMbps":         s.cfg.SpeedLimitMbps,
+	})
+}
+
+func (s *Server) updateSettings(c *gin.Context) {
+	var req struct {
+		SpeedLimitMbps *float64 `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.SpeedLimitMbps != nil {
+		s.cfg.SpeedLimitMbps = *req.SpeedLimitMbps
+		s.dlManager.Engine().SetSpeedLimit(*req.SpeedLimitMbps)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"maxConcurrentDownloads": s.cfg.MaxConcurrentDownloads,
+		"maxSegmentsPerFile":     s.cfg.MaxSegmentsPerFile,
+		"speedLimitMbps":         s.cfg.SpeedLimitMbps,
+	})
+}
+
+// Schedule endpoints
+
+func (s *Server) listSchedules(c *gin.Context) {
+	schedules := s.scheduler.GetSchedules()
+	if schedules == nil {
+		schedules = []downloader.ScheduledDownload{}
+	}
+	c.JSON(http.StatusOK, schedules)
+}
+
+func (s *Server) createSchedule(c *gin.Context) {
+	var req struct {
+		Source         string              `json:"source" binding:"required"`
+		Category       downloader.Category `json:"category" binding:"required"`
+		Folder         string              `json:"folder"`
+		ScheduledAt    string              `json:"scheduledAt" binding:"required"`
+		SpeedLimitMbps float64             `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies' or 'tv-shows'"})
+		return
+	}
+
+	scheduledAt, err := time.Parse(time.RFC3339, req.ScheduledAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be RFC3339 format"})
+		return
+	}
+
+	if scheduledAt.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be in the future"})
+		return
+	}
+
+	sched := s.scheduler.AddSchedule(
+		strings.TrimSpace(req.Source),
+		req.Category,
+		strings.TrimSpace(req.Folder),
+		scheduledAt,
+		req.SpeedLimitMbps,
+	)
+	c.JSON(http.StatusOK, sched)
+}
+
+func (s *Server) getSchedule(c *gin.Context) {
+	sched, err := s.scheduler.GetSchedule(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sched)
+}
+
+func (s *Server) cancelSchedule(c *gin.Context) {
+	if err := s.scheduler.CancelSchedule(c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+}
+
+func (s *Server) removeSchedule(c *gin.Context) {
+	if err := s.scheduler.RemoveSchedule(c.Param("id")); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "removed"})
 }
 
 // Ensure imports are used

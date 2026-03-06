@@ -10,6 +10,7 @@ const (
 	StatusDownloading Status = "downloading"
 	StatusMoving      Status = "moving"
 	StatusCompleted   Status = "completed"
+	StatusPaused      Status = "paused"
 	StatusError       Status = "error"
 	StatusCancelled   Status = "cancelled"
 )
@@ -36,7 +37,7 @@ type DownloadItem struct {
 	Folder      string     `json:"folder,omitempty"`
 	GroupID     string     `json:"groupId,omitempty"`
 	GroupName   string     `json:"groupName,omitempty"`
-	DownloadURL string     `json:"-"`
+	DownloadURL string     `json:"downloadUrl,omitempty"`
 	FilePath    string     `json:"filePath,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`

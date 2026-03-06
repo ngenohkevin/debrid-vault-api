@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -55,6 +56,7 @@ func TestStatusTransitions(t *testing.T) {
 		StatusResolving,
 		StatusDownloading,
 		StatusMoving,
+		StatusPaused,
 		StatusCompleted,
 		StatusError,
 		StatusCancelled,
@@ -67,7 +69,7 @@ func TestStatusTransitions(t *testing.T) {
 	}
 }
 
-func TestCopyFile(t *testing.T) {
+func TestCopyFileBuffered(t *testing.T) {
 	tmpDir := t.TempDir()
 	src := filepath.Join(tmpDir, "source.txt")
 	dst := filepath.Join(tmpDir, "dest.txt")
@@ -77,8 +79,8 @@ func TestCopyFile(t *testing.T) {
 		t.Fatalf("failed to write source: %v", err)
 	}
 
-	if err := copyFile(src, dst); err != nil {
-		t.Fatalf("copyFile failed: %v", err)
+	if err := CopyFileBuffered(context.Background(), src, dst, nil); err != nil {
+		t.Fatalf("CopyFileBuffered failed: %v", err)
 	}
 
 	result, err := os.ReadFile(dst)
@@ -94,7 +96,6 @@ func TestHistoryPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 	historyFile := filepath.Join(tmpDir, ".history.json")
 
-	// Create a manager-like structure and save
 	items := []DownloadItem{
 		{
 			ID:        "test-1",
@@ -106,7 +107,6 @@ func TestHistoryPersistence(t *testing.T) {
 		},
 	}
 
-	// Save manually
 	data, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
@@ -115,7 +115,6 @@ func TestHistoryPersistence(t *testing.T) {
 		t.Fatalf("write failed: %v", err)
 	}
 
-	// Load and verify
 	loaded, err := os.ReadFile(historyFile)
 	if err != nil {
 		t.Fatalf("read failed: %v", err)

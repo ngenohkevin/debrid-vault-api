@@ -15,14 +15,16 @@ type Server struct {
 	cfg       *config.Config
 	rdClient  *realdebrid.Client
 	dlManager *downloader.Manager
+	scheduler *downloader.Scheduler
 	library   *media.Library
 }
 
-func New(cfg *config.Config, rdClient *realdebrid.Client, dlManager *downloader.Manager, library *media.Library) *Server {
+func New(cfg *config.Config, rdClient *realdebrid.Client, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library) *Server {
 	return &Server{
 		cfg:       cfg,
 		rdClient:  rdClient,
 		dlManager: dlManager,
+		scheduler: scheduler,
 		library:   library,
 	}
 }

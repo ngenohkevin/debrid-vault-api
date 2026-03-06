@@ -24,9 +24,14 @@ func main() {
 
 	rdClient := realdebrid.NewClient(cfg.RDApiKey)
 	dlManager := downloader.NewManager(cfg, rdClient)
+	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
-	srv := server.New(cfg, rdClient, dlManager, library)
+	// Start stale file cleanup
+	cleanupStop := make(chan struct{})
+	dlManager.StartCleanup(cleanupStop)
+
+	srv := server.New(cfg, rdClient, dlManager, scheduler, library)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -52,6 +57,8 @@ func main() {
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
+	close(cleanupStop)
+	scheduler.Stop()
 	dlManager.Shutdown()
 	log.Println("Server stopped")
 }

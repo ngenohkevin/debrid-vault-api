@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,12 +20,14 @@ import (
 type Manager struct {
 	cfg         *config.Config
 	rdClient    *realdebrid.Client
+	engine      *DownloadEngine
 	downloads   map[string]*DownloadItem
 	cancels     map[string]context.CancelFunc
 	mu          sync.RWMutex
 	subs        map[chan Event]struct{}
 	subsMu      sync.RWMutex
 	sem         chan struct{}
+	activeCount atomic.Int32
 	historyFile string
 }
 
@@ -33,14 +35,19 @@ func NewManager(cfg *config.Config, rdClient *realdebrid.Client) *Manager {
 	m := &Manager{
 		cfg:         cfg,
 		rdClient:    rdClient,
+		engine:      NewDownloadEngine(cfg.MaxSegmentsPerFile, cfg.SpeedLimitMbps),
 		downloads:   make(map[string]*DownloadItem),
 		cancels:     make(map[string]context.CancelFunc),
 		subs:        make(map[chan Event]struct{}),
-		sem:         make(chan struct{}, 2), // max 2 concurrent downloads
+		sem:         make(chan struct{}, cfg.MaxConcurrentDownloads),
 		historyFile: filepath.Join(cfg.DownloadDir, ".history.json"),
 	}
 	m.loadHistory()
 	return m
+}
+
+func (m *Manager) Engine() *DownloadEngine {
+	return m.engine
 }
 
 func (m *Manager) Shutdown() {
@@ -79,7 +86,6 @@ func (m *Manager) emit(event Event) {
 		select {
 		case ch <- event:
 		default:
-			// drop if subscriber is slow
 		}
 	}
 }
@@ -123,6 +129,112 @@ func (m *Manager) CancelDownload(id string) error {
 	m.mu.Unlock()
 	m.emit(Event{Type: "cancelled", Data: *item})
 	m.saveHistory()
+	return nil
+}
+
+func (m *Manager) PauseDownload(id string) error {
+	m.mu.Lock()
+	cancel, ok := m.cancels[id]
+	item, exists := m.downloads[id]
+	if !exists {
+		m.mu.Unlock()
+		return fmt.Errorf("download not found: %s", id)
+	}
+	if item.Status != StatusDownloading {
+		m.mu.Unlock()
+		return fmt.Errorf("download not in downloading state: %s", item.Status)
+	}
+	if ok {
+		cancel()
+		delete(m.cancels, id)
+	}
+	item.Status = StatusPaused
+	item.Speed = 0
+	item.ETA = 0
+	m.mu.Unlock()
+
+	m.emit(Event{Type: "paused", Data: *item})
+	m.saveHistory()
+	return nil
+}
+
+func (m *Manager) ResumeDownload(id string) error {
+	m.mu.Lock()
+	item, exists := m.downloads[id]
+	if !exists {
+		m.mu.Unlock()
+		return fmt.Errorf("download not found: %s", id)
+	}
+	if item.Status != StatusPaused {
+		m.mu.Unlock()
+		return fmt.Errorf("download not paused: %s", item.Status)
+	}
+
+	// Re-unrestrict if the URL might be expired (RD links expire)
+	source := item.Source
+	downloadURL := item.DownloadURL
+	name := item.Name
+	category := item.Category
+	folder := item.Folder
+	size := item.Size
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancels[id] = cancel
+	item.Status = StatusDownloading
+	m.mu.Unlock()
+
+	m.emit(Event{Type: "resumed", Data: *item})
+
+	go func() {
+		m.sem <- struct{}{}
+		defer func() { <-m.sem }()
+		m.activeCount.Add(1)
+		defer m.activeCount.Add(-1)
+
+		// Try to re-unrestrict to get a fresh URL
+		if strings.Contains(source, "real-debrid.com/d/") || !strings.HasPrefix(downloadURL, "http") {
+			unrestricted, err := m.rdClient.UnrestrictLink(source)
+			if err == nil {
+				downloadURL = unrestricted.Download
+				m.mu.Lock()
+				item.DownloadURL = downloadURL
+				m.mu.Unlock()
+			}
+		}
+
+		destPath := filepath.Join(m.cfg.DownloadDir, name)
+		numSegments := m.dynamicSegments()
+
+		err := m.engine.Download(ctx, downloadURL, destPath, numSegments, func(downloaded, total, speed int64) {
+			m.mu.Lock()
+			item.Downloaded = downloaded
+			if total > 0 {
+				item.Size = total
+				item.Progress = float64(downloaded) / float64(total)
+			}
+			item.Speed = speed
+			if speed > 0 && total > 0 {
+				item.ETA = (total - downloaded) / speed
+			} else {
+				item.ETA = 0
+			}
+			m.mu.Unlock()
+			m.emit(Event{Type: "progress", Data: *item})
+		}, m.statusCallback(item))
+
+		if ctx.Err() != nil {
+			return // paused or cancelled
+		}
+
+		if err != nil {
+			m.setError(item, fmt.Sprintf("Download failed: %v", err))
+			return
+		}
+
+		_ = size
+		m.moveToFinal(ctx, item, destPath, category, folder)
+	}()
+
 	return nil
 }
 
@@ -238,20 +350,17 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 
 	m.updateStatus(item, StatusResolving, "")
 
-	// Add magnet to RD
 	resp, err := m.rdClient.AddMagnet(item.Source)
 	if err != nil {
 		m.setError(item, fmt.Sprintf("Failed to add magnet: %v", err))
 		return
 	}
 
-	// Select all files
 	if err := m.rdClient.SelectFiles(resp.ID, "all"); err != nil {
 		m.setError(item, fmt.Sprintf("Failed to select files: %v", err))
 		return
 	}
 
-	// Poll until torrent is ready
 	for {
 		select {
 		case <-ctx.Done():
@@ -276,7 +385,6 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 		m.emit(Event{Type: "progress", Data: *item})
 
 		if info.Status == "downloaded" {
-			// Unrestrict links and download
 			for _, link := range info.Links {
 				select {
 				case <-ctx.Done():
@@ -299,7 +407,6 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 				m.downloadFile(ctx, item)
 			}
 
-			// Cleanup torrent from RD
 			_ = m.rdClient.DeleteTorrent(resp.ID)
 			return
 		}
@@ -315,45 +422,57 @@ func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	m.sem <- struct{}{}
 	defer func() { <-m.sem }()
 
-	// Try to find the download in RD cloud
-	downloads, err := m.rdClient.ListDownloads(100)
+	// Unrestrict the link directly (no ListDownloads scan)
+	unrestricted, err := m.rdClient.UnrestrictLink(item.Source)
 	if err != nil {
-		m.setError(item, fmt.Sprintf("Failed to list RD downloads: %v", err))
+		m.setError(item, fmt.Sprintf("Failed to resolve link: %v", err))
 		return
 	}
 
-	var downloadURL string
-	var filename string
-	var filesize int64
-
-	for _, dl := range downloads {
-		if dl.Link == item.Source || strings.Contains(item.Source, dl.ID) {
-			downloadURL = dl.Download
-			filename = dl.Filename
-			filesize = dl.Filesize
-			break
-		}
-	}
-
-	if downloadURL == "" {
-		// Try unrestricting the link directly
-		unrestricted, err := m.rdClient.UnrestrictLink(item.Source)
-		if err != nil {
-			m.setError(item, fmt.Sprintf("Failed to resolve link: %v", err))
-			return
-		}
-		downloadURL = unrestricted.Download
-		filename = unrestricted.Filename
-		filesize = unrestricted.Filesize
-	}
-
 	m.mu.Lock()
-	item.DownloadURL = downloadURL
-	item.Name = filename
-	item.Size = filesize
+	item.DownloadURL = unrestricted.Download
+	item.Name = unrestricted.Filename
+	item.Size = unrestricted.Filesize
 	m.mu.Unlock()
 
-	m.downloadFile(ctx, item)
+	m.downloadFileWithEngine(ctx, item)
+}
+
+func (m *Manager) statusCallback(item *DownloadItem) StatusCallback {
+	return func(msg string) {
+		m.mu.Lock()
+		item.Error = msg
+		m.mu.Unlock()
+		m.emit(Event{Type: "progress", Data: *item})
+
+		// Auto-clear "recovered" messages after 3 seconds
+		if strings.Contains(msg, "recovered") {
+			go func() {
+				time.Sleep(3 * time.Second)
+				m.mu.Lock()
+				if item.Error == msg {
+					item.Error = ""
+				}
+				m.mu.Unlock()
+				m.emit(Event{Type: "progress", Data: *item})
+			}()
+		}
+	}
+}
+
+func (m *Manager) dynamicSegments() int {
+	active := int(m.activeCount.Load())
+	if active < 1 {
+		active = 1
+	}
+	n := 8 / active
+	if n < 2 {
+		n = 2
+	}
+	if n > m.cfg.MaxSegmentsPerFile {
+		n = m.cfg.MaxSegmentsPerFile
+	}
+	return n
 }
 
 func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
@@ -361,157 +480,120 @@ func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
 		m.setError(item, "No download URL")
 		return
 	}
+	m.downloadFileWithEngine(ctx, item)
+}
+
+func (m *Manager) downloadFileWithEngine(ctx context.Context, item *DownloadItem) {
+	if item.DownloadURL == "" {
+		m.setError(item, "No download URL")
+		return
+	}
+
+	m.activeCount.Add(1)
+	defer m.activeCount.Add(-1)
 
 	m.updateStatus(item, StatusDownloading, "")
 
-	// Create staging file
 	destPath := filepath.Join(m.cfg.DownloadDir, item.Name)
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		m.setError(item, fmt.Sprintf("Failed to create directory: %v", err))
 		return
 	}
 
-	file, err := os.Create(destPath)
-	if err != nil {
-		m.setError(item, fmt.Sprintf("Failed to create file: %v", err))
-		return
-	}
-	defer file.Close()
+	numSegments := m.dynamicSegments()
 
-	var lastEmit time.Time
-	var lastBytes int64
-	var lastTime time.Time
-
-	err = m.rdClient.DownloadFile(item.DownloadURL, file, func(downloaded, total int64) {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		now := time.Now()
-		if now.Sub(lastEmit) < 500*time.Millisecond {
-			return
-		}
-
-		// Calculate speed
-		elapsed := now.Sub(lastTime).Seconds()
-		var speed int64
-		if elapsed > 0 && lastTime != (time.Time{}) {
-			speed = int64(float64(downloaded-lastBytes) / elapsed)
-		}
-
-		// Calculate ETA
-		var eta int64
-		if speed > 0 && total > 0 {
-			eta = (total - downloaded) / speed
-		}
-
+	statusCb := m.statusCallback(item)
+	err := m.engine.Download(ctx, item.DownloadURL, destPath, numSegments, func(downloaded, total, speed int64) {
 		m.mu.Lock()
 		item.Downloaded = downloaded
-		item.Size = total
 		if total > 0 {
+			item.Size = total
 			item.Progress = float64(downloaded) / float64(total)
 		}
 		item.Speed = speed
-		item.ETA = eta
+		if speed > 0 && total > 0 {
+			item.ETA = (total - downloaded) / speed
+		} else {
+			item.ETA = 0
+		}
 		m.mu.Unlock()
-
 		m.emit(Event{Type: "progress", Data: *item})
-		lastEmit = now
-		lastBytes = downloaded
-		lastTime = now
-	})
+	}, statusCb)
 
 	if ctx.Err() != nil {
-		os.Remove(destPath)
+		// Paused or cancelled — don't clean up the file
 		return
 	}
 
-	// Retry on network errors (up to 3 attempts)
-	for attempt := 1; err != nil && attempt <= 3; attempt++ {
+	// Whole-file retry with re-unrestrict (URL may have expired, or internet was down)
+	// Retries: 30s, 1m, 2m, 5m — total ~8.5 min on top of the per-segment retries
+	wholeFileBackoffs := []time.Duration{30 * time.Second, 1 * time.Minute, 2 * time.Minute, 5 * time.Minute}
+	for retryNum := 0; err != nil && retryNum < len(wholeFileBackoffs); retryNum++ {
 		if ctx.Err() != nil {
-			os.Remove(destPath)
 			return
 		}
-		log.Printf("Download failed (attempt %d/3): %s - %v. Retrying in 10s...", attempt, item.Name, err)
+
+		log.Printf("Download failed (whole-file retry %d/%d): %s - %v",
+			retryNum+1, len(wholeFileBackoffs), item.Name, err)
+
 		m.mu.Lock()
-		item.Error = fmt.Sprintf("Retry %d/3 in 10s...", attempt)
+		item.Error = fmt.Sprintf("Retrying in %s... (%d/%d)", wholeFileBackoffs[retryNum], retryNum+1, len(wholeFileBackoffs))
 		m.mu.Unlock()
 		m.emit(Event{Type: "progress", Data: *item})
 
 		select {
-		case <-time.After(10 * time.Second):
+		case <-time.After(wholeFileBackoffs[retryNum]):
 		case <-ctx.Done():
-			os.Remove(destPath)
 			return
 		}
 
-		// Re-create file for retry
-		file.Close()
-		os.Remove(destPath)
-		file, err = os.Create(destPath)
-		if err != nil {
-			m.setError(item, fmt.Sprintf("Failed to create file: %v", err))
-			return
+		// Re-unrestrict to get a fresh download URL
+		unrestricted, unreErr := m.rdClient.UnrestrictLink(item.Source)
+		if unreErr != nil {
+			log.Printf("Re-unrestrict failed: %v (will retry)", unreErr)
+			err = fmt.Errorf("download: %v, re-unrestrict: %v", err, unreErr)
+			continue
 		}
 
 		m.mu.Lock()
+		item.DownloadURL = unrestricted.Download
 		item.Error = ""
-		item.Downloaded = 0
-		item.Progress = 0
 		m.mu.Unlock()
-		m.updateStatus(item, StatusDownloading, "")
-		lastEmit = time.Time{}
-		lastBytes = 0
-		lastTime = time.Time{}
 
-		err = m.rdClient.DownloadFile(item.DownloadURL, file, func(downloaded, total int64) {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			now := time.Now()
-			if now.Sub(lastEmit) < 500*time.Millisecond {
-				return
-			}
-			elapsed := now.Sub(lastTime).Seconds()
-			var speed int64
-			if elapsed > 0 && lastTime != (time.Time{}) {
-				speed = int64(float64(downloaded-lastBytes) / elapsed)
-			}
-			var eta int64
-			if speed > 0 && total > 0 {
-				eta = (total - downloaded) / speed
-			}
+		err = m.engine.Download(ctx, unrestricted.Download, destPath, numSegments, func(downloaded, total, speed int64) {
 			m.mu.Lock()
 			item.Downloaded = downloaded
-			item.Size = total
 			if total > 0 {
+				item.Size = total
 				item.Progress = float64(downloaded) / float64(total)
 			}
 			item.Speed = speed
-			item.ETA = eta
+			if speed > 0 && total > 0 {
+				item.ETA = (total - downloaded) / speed
+			} else {
+				item.ETA = 0
+			}
 			m.mu.Unlock()
 			m.emit(Event{Type: "progress", Data: *item})
-			lastEmit = now
-			lastBytes = downloaded
-			lastTime = now
-		})
+		}, statusCb)
 	}
 
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
-		os.Remove(destPath)
-		m.setError(item, fmt.Sprintf("Download failed after 3 attempts: %v", err))
+		m.setError(item, fmt.Sprintf("Download failed after all retries: %v", err))
 		return
 	}
 
-	// Move to destination
+	m.moveToFinal(ctx, item, destPath, item.Category, item.Folder)
+}
+
+func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath string, category Category, folder string) {
 	m.updateStatus(item, StatusMoving, "")
 
 	var finalDir string
-	switch item.Category {
+	switch category {
 	case CategoryMovies:
 		finalDir = m.cfg.MoviesDir
 	case CategoryTVShows:
@@ -520,9 +602,8 @@ func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
 		finalDir = m.cfg.MoviesDir
 	}
 
-	// If a folder is specified, put the file in a subfolder
-	if item.Folder != "" {
-		finalDir = filepath.Join(finalDir, item.Folder)
+	if folder != "" {
+		finalDir = filepath.Join(finalDir, folder)
 	}
 
 	finalPath := filepath.Join(finalDir, item.Name)
@@ -531,9 +612,16 @@ func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
 		return
 	}
 
-	// Try rename first (same filesystem), fallback to copy
+	// Try rename first (same filesystem), fallback to buffered copy with progress
 	if err := os.Rename(destPath, finalPath); err != nil {
-		if err := copyFile(destPath, finalPath); err != nil {
+		if err := CopyFileBuffered(ctx, destPath, finalPath, func(copied, total int64) {
+			m.mu.Lock()
+			if total > 0 {
+				item.Progress = float64(copied) / float64(total)
+			}
+			m.mu.Unlock()
+			m.emit(Event{Type: "progress", Data: *item})
+		}); err != nil {
 			m.setError(item, fmt.Sprintf("Failed to move file: %v", err))
 			return
 		}
@@ -601,34 +689,119 @@ func (m *Manager) loadHistory() {
 	if err := json.Unmarshal(data, &items); err != nil {
 		return
 	}
+
+	var toResume []*DownloadItem
 	for i := range items {
 		item := items[i]
-		// Reset any stuck downloads
-		if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusMoving {
+		if item.Status == StatusDownloading || item.Status == StatusMoving {
+			// Has a download URL and a .part file may exist — auto-resume
+			if item.DownloadURL != "" && item.Name != "" {
+				item.Status = StatusPaused
+				item.Speed = 0
+				item.ETA = 0
+				item.Error = ""
+				m.downloads[item.ID] = &item
+				toResume = append(toResume, m.downloads[item.ID])
+				continue
+			}
+			// No URL — can't resume, mark as error
 			item.Status = StatusError
 			item.Error = "interrupted by restart"
 			item.Speed = 0
 		}
+		if item.Status == StatusResolving || item.Status == StatusPending {
+			// Resolving/pending can't be resumed (no download URL yet)
+			item.Status = StatusError
+			item.Error = "interrupted by restart"
+			item.Speed = 0
+		}
+		// Paused downloads stay paused — they can be resumed
 		m.downloads[item.ID] = &item
+	}
+
+	// Auto-resume interrupted downloads after a short delay (let the server fully start)
+	if len(toResume) > 0 {
+		go func() {
+			time.Sleep(5 * time.Second)
+			for _, item := range toResume {
+				log.Printf("Auto-resuming interrupted download: %s (%s)", item.ID, item.Name)
+				if err := m.ResumeDownload(item.ID); err != nil {
+					log.Printf("Auto-resume failed for %s: %v", item.ID, err)
+				}
+			}
+		}()
 	}
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+// cleanStaleStagingFiles removes staging files and .part files that don't belong
+// to any active or paused download.
+func (m *Manager) cleanStaleStagingFiles() {
+	entries, err := os.ReadDir(m.cfg.DownloadDir)
 	if err != nil {
-		return err
+		return
 	}
-	defer in.Close()
 
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
+	// Build set of expected filenames from active/paused downloads
+	m.mu.RLock()
+	expected := make(map[string]bool)
+	for _, item := range m.downloads {
+		if item.Status == StatusDownloading || item.Status == StatusPaused ||
+			item.Status == StatusMoving || item.Status == StatusResolving ||
+			item.Status == StatusPending {
+			if item.Name != "" {
+				expected[item.Name] = true
+				expected[item.Name+".part"] = true
+			}
+		}
 	}
-	defer out.Close()
+	m.mu.RUnlock()
 
-	_, err = io.Copy(out, in)
-	if err != nil {
-		return err
+	for _, entry := range entries {
+		name := entry.Name()
+		// Skip history and schedule files
+		if name == ".history.json" || name == ".schedules.json" {
+			continue
+		}
+		// Skip directories
+		if entry.IsDir() {
+			continue
+		}
+		// Skip files belonging to active downloads
+		if expected[name] {
+			continue
+		}
+		// Only clean .part files from orphaned downloads
+		if filepath.Ext(name) == ".part" || filepath.Ext(name) == ".tmp" {
+			path := filepath.Join(m.cfg.DownloadDir, name)
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			// Only remove if older than 1 hour (safety margin)
+			if time.Since(info.ModTime()) > 1*time.Hour {
+				log.Printf("Cleaning stale file: %s", name)
+				os.Remove(path)
+			}
+		}
 	}
-	return out.Close()
+}
+
+// StartCleanup begins periodic cleanup of stale staging files.
+func (m *Manager) StartCleanup(stopCh <-chan struct{}) {
+	// Initial cleanup on startup (delayed)
+	go func() {
+		time.Sleep(30 * time.Second)
+		m.cleanStaleStagingFiles()
+
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				m.cleanStaleStagingFiles()
+			}
+		}
+	}()
 }

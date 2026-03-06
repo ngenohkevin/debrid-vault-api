@@ -15,19 +15,22 @@ import (
 
 func setupTestServer() *Server {
 	cfg := &config.Config{
-		Port:           "6501",
-		RDApiKey:       "test-key",
-		DownloadDir:    "/tmp/test-downloads",
-		MoviesDir:      "/tmp/test-movies",
-		TVShowsDir:     "/tmp/test-tvshows",
-		AllowedOrigins: "*",
+		Port:                   "6501",
+		RDApiKey:               "test-key",
+		DownloadDir:            "/tmp/test-downloads",
+		MoviesDir:              "/tmp/test-movies",
+		TVShowsDir:             "/tmp/test-tvshows",
+		AllowedOrigins:         "*",
+		MaxConcurrentDownloads: 4,
+		MaxSegmentsPerFile:     8,
 	}
 
 	rdClient := realdebrid.NewClient("test-key")
 	dlManager := downloader.NewManager(cfg, rdClient)
+	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
-	return New(cfg, rdClient, dlManager, library)
+	return New(cfg, rdClient, dlManager, scheduler, library)
 }
 
 func TestHealthCheck(t *testing.T) {
@@ -142,19 +145,22 @@ func TestSearchLibraryMissingQuery(t *testing.T) {
 
 func TestAPIKeyMiddleware(t *testing.T) {
 	cfg := &config.Config{
-		Port:           "6501",
-		RDApiKey:       "test-key",
-		DownloadDir:    "/tmp/test-downloads",
-		MoviesDir:      "/tmp/test-movies",
-		TVShowsDir:     "/tmp/test-tvshows",
-		AllowedOrigins: "*",
-		APIKey:         "secret-key",
+		Port:                   "6501",
+		RDApiKey:               "test-key",
+		DownloadDir:            "/tmp/test-downloads",
+		MoviesDir:              "/tmp/test-movies",
+		TVShowsDir:             "/tmp/test-tvshows",
+		AllowedOrigins:         "*",
+		APIKey:                 "secret-key",
+		MaxConcurrentDownloads: 4,
+		MaxSegmentsPerFile:     8,
 	}
 
 	rdClient := realdebrid.NewClient("test-key")
 	dlManager := downloader.NewManager(cfg, rdClient)
+	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
-	srv := New(cfg, rdClient, dlManager, library)
+	srv := New(cfg, rdClient, dlManager, scheduler, library)
 	router := srv.Router()
 
 	t.Run("health check bypasses auth", func(t *testing.T) {
