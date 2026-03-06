@@ -52,10 +52,11 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Fatalf("Server shutdown failed: %v", err)
+		log.Printf("Graceful shutdown timed out, forcing: %v", err)
+		httpServer.Close()
 	}
 	close(cleanupStop)
 	scheduler.Stop()

@@ -56,6 +56,7 @@ func NewScheduler(manager *Manager) *Scheduler {
 		stopCh:       make(chan struct{}),
 	}
 	s.loadSchedules()
+	s.retryInterrupted()
 	go s.run()
 	return s
 }
@@ -302,9 +303,36 @@ func (s *Scheduler) loadSchedules() {
 	for i := range items {
 		item := items[i]
 		if item.Status == ScheduleStatusRunning {
-			item.Status = ScheduleStatusError
-			item.Error = "interrupted by restart"
+			// Mark as scheduled so retryInterrupted can re-execute
+			item.Status = ScheduleStatusScheduled
+			item.Error = ""
+			item.ScheduledAt = time.Now()
 		}
 		s.schedules[item.ID] = &item
 	}
+}
+
+// retryInterrupted re-executes schedules that were running when the service restarted.
+func (s *Scheduler) retryInterrupted() {
+	s.mu.RLock()
+	var due []*ScheduledDownload
+	for _, sched := range s.schedules {
+		if sched.Status == ScheduleStatusScheduled && !sched.ScheduledAt.After(time.Now()) {
+			due = append(due, sched)
+		}
+	}
+	s.mu.RUnlock()
+
+	if len(due) == 0 {
+		return
+	}
+
+	// Delay to let the server fully start
+	go func() {
+		time.Sleep(10 * time.Second)
+		for _, sched := range due {
+			log.Printf("Re-executing interrupted schedule: %s", sched.ID)
+			s.executeSchedule(sched)
+		}
+	}()
 }
