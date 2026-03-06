@@ -9,20 +9,28 @@ type User struct {
 	Type       string `json:"type"`
 }
 
+type TorrentFile struct {
+	ID       int    `json:"id"`
+	Path     string `json:"path"`
+	Bytes    int64  `json:"bytes"`
+	Selected int    `json:"selected"`
+}
+
 type Torrent struct {
-	ID       string   `json:"id"`
-	Filename string   `json:"filename"`
-	Hash     string   `json:"hash"`
-	Bytes    int64    `json:"bytes"`
-	Host     string   `json:"host"`
-	Split    int      `json:"split"`
-	Progress float64  `json:"progress"`
-	Status   string   `json:"status"`
-	Added    string   `json:"added"`
-	Links    []string `json:"links"`
-	Ended    string   `json:"ended"`
-	Speed    int64    `json:"speed"`
-	Seeders  int      `json:"seeders"`
+	ID       string        `json:"id"`
+	Filename string        `json:"filename"`
+	Hash     string        `json:"hash"`
+	Bytes    int64         `json:"bytes"`
+	Host     string        `json:"host"`
+	Split    int           `json:"split"`
+	Progress float64       `json:"progress"`
+	Status   string        `json:"status"`
+	Added    string        `json:"added"`
+	Links    []string      `json:"links"`
+	Ended    string        `json:"ended"`
+	Speed    int64         `json:"speed"`
+	Seeders  int           `json:"seeders"`
+	Files    []TorrentFile `json:"files,omitempty"`
 }
 
 type Download struct {

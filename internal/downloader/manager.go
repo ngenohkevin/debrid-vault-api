@@ -18,14 +18,14 @@ import (
 )
 
 type Manager struct {
-	cfg        *config.Config
-	rdClient   *realdebrid.Client
-	downloads  map[string]*DownloadItem
-	cancels    map[string]context.CancelFunc
-	mu         sync.RWMutex
-	subs       map[chan Event]struct{}
-	subsMu     sync.RWMutex
-	sem        chan struct{}
+	cfg         *config.Config
+	rdClient    *realdebrid.Client
+	downloads   map[string]*DownloadItem
+	cancels     map[string]context.CancelFunc
+	mu          sync.RWMutex
+	subs        map[chan Event]struct{}
+	subsMu      sync.RWMutex
+	sem         chan struct{}
 	historyFile string
 }
 
@@ -406,9 +406,82 @@ func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
 		return
 	}
 
+	// Retry on network errors (up to 3 attempts)
+	for attempt := 1; err != nil && attempt <= 3; attempt++ {
+		if ctx.Err() != nil {
+			os.Remove(destPath)
+			return
+		}
+		log.Printf("Download failed (attempt %d/3): %s - %v. Retrying in 10s...", attempt, item.Name, err)
+		m.mu.Lock()
+		item.Error = fmt.Sprintf("Retry %d/3 in 10s...", attempt)
+		m.mu.Unlock()
+		m.emit(Event{Type: "progress", Data: *item})
+
+		select {
+		case <-time.After(10 * time.Second):
+		case <-ctx.Done():
+			os.Remove(destPath)
+			return
+		}
+
+		// Re-create file for retry
+		file.Close()
+		os.Remove(destPath)
+		file, err = os.Create(destPath)
+		if err != nil {
+			m.setError(item, fmt.Sprintf("Failed to create file: %v", err))
+			return
+		}
+
+		m.mu.Lock()
+		item.Error = ""
+		item.Downloaded = 0
+		item.Progress = 0
+		m.mu.Unlock()
+		m.updateStatus(item, StatusDownloading, "")
+		lastEmit = time.Time{}
+		lastBytes = 0
+		lastTime = time.Time{}
+
+		err = m.rdClient.DownloadFile(item.DownloadURL, file, func(downloaded, total int64) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			now := time.Now()
+			if now.Sub(lastEmit) < 500*time.Millisecond {
+				return
+			}
+			elapsed := now.Sub(lastTime).Seconds()
+			var speed int64
+			if elapsed > 0 && lastTime != (time.Time{}) {
+				speed = int64(float64(downloaded-lastBytes) / elapsed)
+			}
+			var eta int64
+			if speed > 0 && total > 0 {
+				eta = (total - downloaded) / speed
+			}
+			m.mu.Lock()
+			item.Downloaded = downloaded
+			item.Size = total
+			if total > 0 {
+				item.Progress = float64(downloaded) / float64(total)
+			}
+			item.Speed = speed
+			item.ETA = eta
+			m.mu.Unlock()
+			m.emit(Event{Type: "progress", Data: *item})
+			lastEmit = now
+			lastBytes = downloaded
+			lastTime = now
+		})
+	}
+
 	if err != nil {
 		os.Remove(destPath)
-		m.setError(item, fmt.Sprintf("Download failed: %v", err))
+		m.setError(item, fmt.Sprintf("Download failed after 3 attempts: %v", err))
 		return
 	}
 

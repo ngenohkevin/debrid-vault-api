@@ -28,11 +28,13 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.GET("/downloads/events", s.downloadEvents)
 		api.GET("/downloads/:id", s.getDownload)
 		api.DELETE("/downloads/:id", s.cancelDownload)
+		api.DELETE("/downloads/:id/remove", s.removeDownload)
 
 		// Real-Debrid
 		api.GET("/rd/user", s.getRDUser)
 		api.GET("/rd/downloads", s.getRDDownloads)
 		api.GET("/rd/torrents", s.getRDTorrents)
+		api.GET("/rd/torrents/:id", s.getRDTorrentInfo)
 		api.POST("/rd/unrestrict", s.unrestrictLink)
 
 		// Library
@@ -138,6 +140,14 @@ func (s *Server) cancelDownload(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 }
 
+func (s *Server) removeDownload(c *gin.Context) {
+	if err := s.dlManager.RemoveDownload(c.Param("id")); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "removed"})
+}
+
 func (s *Server) downloadEvents(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -197,6 +207,15 @@ func (s *Server) getRDTorrents(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, torrents)
+}
+
+func (s *Server) getRDTorrentInfo(c *gin.Context) {
+	torrent, err := s.rdClient.GetTorrentInfo(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, torrent)
 }
 
 func (s *Server) unrestrictLink(c *gin.Context) {
