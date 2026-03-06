@@ -34,12 +34,13 @@ jobs:
         run: |
           chmod +x bin/debrid-vault
 
-          # Stop service before replacing binary
-          ssh -o StrictHostKeyChecking=no root@pi 'systemctl stop debrid-vault.service 2>/dev/null || true'
-
-          scp -o StrictHostKeyChecking=no bin/debrid-vault root@pi:/home/ngenoh/dev/backend/debrid-vault/debrid-vault
+          # Upload binary to temp path first, then swap after stopping service
+          scp -o StrictHostKeyChecking=no bin/debrid-vault root@pi:/tmp/debrid-vault-new
 
           ssh -o StrictHostKeyChecking=no root@pi << 'DEPLOY'
+          systemctl stop debrid-vault.service 2>/dev/null || true
+          cp /tmp/debrid-vault-new /home/ngenoh/dev/backend/debrid-vault/debrid-vault
+          rm -f /tmp/debrid-vault-new
           # Create directories
           mkdir -p /home/ngenoh/dev/backend/debrid-vault
           mkdir -p /home/ngenoh/downloads/staging
