@@ -378,6 +378,7 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 		item.Name = info.Filename
 		item.Size = info.Bytes
 		item.Progress = info.Progress / 100.0
+		item.Category = DetectCategory(info.Filename)
 		if info.Speed > 0 {
 			item.Speed = info.Speed
 		}
@@ -433,6 +434,8 @@ func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	item.DownloadURL = unrestricted.Download
 	item.Name = unrestricted.Filename
 	item.Size = unrestricted.Filesize
+	// Auto-correct category based on actual filename
+	item.Category = DetectCategory(unrestricted.Filename)
 	m.mu.Unlock()
 
 	m.downloadFileWithEngine(ctx, item)
