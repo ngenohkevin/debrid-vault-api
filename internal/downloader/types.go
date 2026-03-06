@@ -33,6 +33,9 @@ type DownloadItem struct {
 	ETA         int64      `json:"eta"`
 	Error       string     `json:"error,omitempty"`
 	Source      string     `json:"source"`
+	Folder      string     `json:"folder,omitempty"`
+	GroupID     string     `json:"groupId,omitempty"`
+	GroupName   string     `json:"groupName,omitempty"`
 	DownloadURL string     `json:"-"`
 	FilePath    string     `json:"filePath,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`

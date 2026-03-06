@@ -24,6 +24,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 		// Downloads
 		api.POST("/downloads", s.startDownload)
+		api.POST("/downloads/batch", s.startBatchDownload)
 		api.GET("/downloads", s.listDownloads)
 		api.GET("/downloads/events", s.downloadEvents)
 		api.GET("/downloads/:id", s.getDownload)
@@ -82,6 +83,7 @@ func (s *Server) startDownload(c *gin.Context) {
 	var req struct {
 		Source   string              `json:"source" binding:"required"`
 		Category downloader.Category `json:"category" binding:"required"`
+		Folder   string              `json:"folder"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -97,11 +99,13 @@ func (s *Server) startDownload(c *gin.Context) {
 	var err error
 
 	source := strings.TrimSpace(req.Source)
+	folder := strings.TrimSpace(req.Folder)
+
 	switch {
 	case strings.HasPrefix(source, "magnet:"):
 		item, err = s.dlManager.AddMagnet(source, req.Category)
 	case strings.Contains(source, "real-debrid.com/d/"):
-		item, err = s.dlManager.AddRDLink(source, req.Category)
+		item, err = s.dlManager.AddRDLink(source, req.Category, folder)
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
 		item, err = s.dlManager.AddDirectURL(source, "download", req.Category)
 	default:
@@ -114,6 +118,30 @@ func (s *Server) startDownload(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, item)
+}
+
+func (s *Server) startBatchDownload(c *gin.Context) {
+	var req struct {
+		Links     []string            `json:"links" binding:"required"`
+		GroupName string              `json:"groupName" binding:"required"`
+		Category  downloader.Category `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies' or 'tv-shows'"})
+		return
+	}
+
+	items, err := s.dlManager.AddRDBatch(req.Links, req.GroupName, req.Category)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, items)
 }
 
 func (s *Server) listDownloads(c *gin.Context) {

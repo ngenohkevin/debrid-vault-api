@@ -165,13 +165,35 @@ func (m *Manager) AddMagnet(magnet string, category Category) (*DownloadItem, er
 	return item, nil
 }
 
-func (m *Manager) AddRDLink(link string, category Category) (*DownloadItem, error) {
+func (m *Manager) AddRDBatch(links []string, groupName string, category Category) ([]*DownloadItem, error) {
+	groupID := uuid.New().String()[:8]
+	folder := groupName
+	var items []*DownloadItem
+
+	for _, link := range links {
+		item, err := m.addRDLinkInternal(link, category, folder, groupID, groupName)
+		if err != nil {
+			return items, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (m *Manager) AddRDLink(link string, category Category, folder string) (*DownloadItem, error) {
+	return m.addRDLinkInternal(link, category, folder, "", "")
+}
+
+func (m *Manager) addRDLinkInternal(link string, category Category, folder, groupID, groupName string) (*DownloadItem, error) {
 	item := &DownloadItem{
 		ID:        uuid.New().String()[:8],
 		Name:      "Resolving RD link...",
 		Category:  category,
 		Status:    StatusResolving,
 		Source:    link,
+		Folder:    folder,
+		GroupID:   groupID,
+		GroupName: groupName,
 		CreatedAt: time.Now(),
 	}
 
@@ -496,6 +518,11 @@ func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
 		finalDir = m.cfg.TVShowsDir
 	default:
 		finalDir = m.cfg.MoviesDir
+	}
+
+	// If a folder is specified, put the file in a subfolder
+	if item.Folder != "" {
+		finalDir = filepath.Join(finalDir, item.Folder)
 	}
 
 	finalPath := filepath.Join(finalDir, item.Name)
