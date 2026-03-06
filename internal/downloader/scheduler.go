@@ -360,7 +360,7 @@ func (s *Scheduler) retryInterrupted() {
 
 	// Delay to let the manager's auto-resume finish first
 	go func() {
-		time.Sleep(12 * time.Second)
+		time.Sleep(5 * time.Second)
 		for _, sched := range interrupted {
 			// Check if the manager already has and is resuming this download
 			if sched.DownloadID != "" {

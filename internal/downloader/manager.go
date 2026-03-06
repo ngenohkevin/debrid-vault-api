@@ -733,7 +733,7 @@ func (m *Manager) loadHistory() {
 	// Auto-resume interrupted downloads after a short delay (let the server fully start)
 	if len(toResume) > 0 {
 		go func() {
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			for _, item := range toResume {
 				log.Printf("Auto-resuming interrupted download: %s (%s)", item.ID, item.Name)
 				if err := m.ResumeDownload(item.ID); err != nil {
