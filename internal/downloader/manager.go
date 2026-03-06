@@ -55,8 +55,11 @@ func (m *Manager) Shutdown() {
 	for id, cancel := range m.cancels {
 		cancel()
 		if item, ok := m.downloads[id]; ok {
-			if item.Status == StatusDownloading || item.Status == StatusResolving {
-				item.Status = StatusCancelled
+			if item.Status == StatusDownloading || item.Status == StatusResolving || item.Status == StatusMoving {
+				// Mark as paused so loadHistory can auto-resume on restart
+				item.Status = StatusPaused
+				item.Speed = 0
+				item.ETA = 0
 			}
 		}
 	}
@@ -718,7 +721,12 @@ func (m *Manager) loadHistory() {
 			item.Error = "interrupted by restart"
 			item.Speed = 0
 		}
-		// Paused downloads stay paused — they can be resumed
+		// Auto-resume paused downloads that were interrupted by shutdown
+		if item.Status == StatusPaused && item.DownloadURL != "" && item.Name != "" {
+			m.downloads[item.ID] = &item
+			toResume = append(toResume, m.downloads[item.ID])
+			continue
+		}
 		m.downloads[item.ID] = &item
 	}
 
