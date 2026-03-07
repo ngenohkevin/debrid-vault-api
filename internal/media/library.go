@@ -58,7 +58,12 @@ func (l *Library) ListMedia(category string) ([]MediaFile, error) {
 				IsDir:    entry.IsDir(),
 				Category: d.cat,
 			}
-			if !entry.IsDir() {
+			if entry.IsDir() {
+				// Probe first video file inside directory as representative sample
+				hasSubs, tracks := probeFirstVideoInDir(mf.Path)
+				mf.HasSubtitles = hasSubs
+				mf.SubtitleTracks = tracks
+			} else {
 				hasSubs, tracks := ProbeSubtitles(mf.Path)
 				mf.HasSubtitles = &hasSubs
 				mf.SubtitleTracks = tracks

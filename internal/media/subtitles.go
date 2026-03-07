@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -110,6 +111,26 @@ func ProbeSubtitles(path string) (bool, []SubtitleTrack) {
 	subCache.mu.Unlock()
 
 	return hasSubs, tracks
+}
+
+// probeFirstVideoInDir finds the first video file in a directory and probes it.
+// Returns nil for hasSubs if no video file is found.
+func probeFirstVideoInDir(dir string) (*bool, []SubtitleTrack) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if videoExtensions[ext] {
+			hasSubs, tracks := ProbeSubtitles(filepath.Join(dir, entry.Name()))
+			return &hasSubs, tracks
+		}
+	}
+	return nil, nil
 }
 
 // InvalidateSubtitleCache removes a path from the cache.
