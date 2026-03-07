@@ -42,6 +42,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.PUT("/schedules/:id", s.updateSchedule)
 		api.DELETE("/schedules/:id", s.cancelSchedule)
 		api.DELETE("/schedules/:id/remove", s.removeSchedule)
+		api.GET("/downloads/:id/resumable", s.checkResumable)
+		api.POST("/downloads/:id/schedule", s.scheduleExisting)
+		api.POST("/downloads/group/:groupId/schedule", s.scheduleExistingGroup)
 
 		// Settings
 		api.GET("/settings", s.getSettings)
@@ -505,6 +508,78 @@ func (s *Server) cancelSchedule(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+}
+
+func (s *Server) checkResumable(c *gin.Context) {
+	if err := s.dlManager.CheckResumable(c.Param("id")); err != nil {
+		c.JSON(http.StatusOK, gin.H{"resumable": false, "reason": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"resumable": true})
+}
+
+func (s *Server) scheduleExisting(c *gin.Context) {
+	var req struct {
+		ScheduledAt    string  `json:"scheduledAt" binding:"required"`
+		SpeedLimitMbps float64 `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	scheduledAt, err := time.Parse(time.RFC3339, req.ScheduledAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be RFC3339 format"})
+		return
+	}
+	if scheduledAt.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be in the future"})
+		return
+	}
+
+	sched, err := s.scheduler.ScheduleExisting(c.Param("id"), scheduledAt, req.SpeedLimitMbps)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sched)
+}
+
+func (s *Server) scheduleExistingGroup(c *gin.Context) {
+	var req struct {
+		ScheduledAt    string  `json:"scheduledAt" binding:"required"`
+		SpeedLimitMbps float64 `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	scheduledAt, err := time.Parse(time.RFC3339, req.ScheduledAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be RFC3339 format"})
+		return
+	}
+	if scheduledAt.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be in the future"})
+		return
+	}
+
+	// Find any item in the group to pass to ScheduleExisting
+	groupID := c.Param("groupId")
+	items := s.dlManager.GetDownloadsByGroup(groupID)
+	if len(items) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+
+	sched, err := s.scheduler.ScheduleExisting(items[0].ID, scheduledAt, req.SpeedLimitMbps)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sched)
 }
 
 func (s *Server) removeSchedule(c *gin.Context) {

@@ -37,6 +37,7 @@ type ScheduledDownload struct {
 	Error          string         `json:"error,omitempty"`
 	DownloadID     string         `json:"downloadId,omitempty"`
 	GroupID        string         `json:"groupId,omitempty"`
+	ResumeIDs      []string       `json:"resumeIds,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	CompletedAt    *time.Time     `json:"completedAt,omitempty"`
 }
@@ -105,6 +106,71 @@ func (s *Scheduler) AddSchedule(name, source string, category Category, folder s
 	s.saveSchedules()
 	log.Printf("Schedule added: %s at %s (limit: %.0f Mbps)", sched.ID, scheduledAt.Format(time.RFC3339), speedLimitMbps)
 	return sched
+}
+
+// ScheduleExisting pauses an active download (or group) and schedules it to resume later.
+func (s *Scheduler) ScheduleExisting(downloadID string, scheduledAt time.Time, speedLimitMbps float64) (*ScheduledDownload, error) {
+	item, err := s.manager.GetDownload(downloadID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect all IDs to pause and resume (single or group)
+	var resumeIDs []string
+	var name string
+	var groupID string
+
+	if item.GroupID != "" {
+		// Group download — pause and schedule all items
+		groupID = item.GroupID
+		name = item.GroupName
+		items := s.manager.GetDownloadsByGroup(item.GroupID)
+		for _, gi := range items {
+			if err := s.manager.CheckResumable(gi.ID); err != nil {
+				continue // skip non-resumable items (completed, etc.)
+			}
+			resumeIDs = append(resumeIDs, gi.ID)
+		}
+	} else {
+		// Single download
+		if err := s.manager.CheckResumable(downloadID); err != nil {
+			return nil, err
+		}
+		name = item.Name
+		resumeIDs = []string{downloadID}
+	}
+
+	if len(resumeIDs) == 0 {
+		return nil, fmt.Errorf("no resumable downloads found")
+	}
+
+	// Pause all the downloads
+	for _, id := range resumeIDs {
+		_ = s.manager.PauseDownload(id)
+	}
+
+	sched := &ScheduledDownload{
+		ID:             uuid.New().String()[:8],
+		Name:           name,
+		Source:         item.Source,
+		Category:       item.Category,
+		Folder:         item.Folder,
+		ScheduledAt:    scheduledAt,
+		SpeedLimitMbps: speedLimitMbps,
+		Status:         ScheduleStatusScheduled,
+		DownloadID:     downloadID,
+		GroupID:        groupID,
+		ResumeIDs:      resumeIDs,
+		CreatedAt:      time.Now(),
+	}
+
+	s.mu.Lock()
+	s.schedules[sched.ID] = sched
+	s.mu.Unlock()
+
+	s.saveSchedules()
+	log.Printf("Scheduled existing download: %s (%d items) at %s", sched.ID, len(resumeIDs), scheduledAt.Format(time.RFC3339))
+	return sched, nil
 }
 
 func (s *Scheduler) UpdateSchedule(id string, scheduledAt *time.Time, speedLimitMbps *float64) (*ScheduledDownload, error) {
@@ -259,6 +325,7 @@ func (s *Scheduler) checkSchedules() {
 func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 	s.mu.Lock()
 	sched.Status = ScheduleStatusRunning
+	resumeIDs := sched.ResumeIDs
 	s.mu.Unlock()
 	s.saveSchedules()
 
@@ -274,7 +341,13 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 		s.manager.cfg.SpeedLimitMbps = sched.SpeedLimitMbps
 	}
 
-	// Start the download
+	// Resume mode: resume existing paused downloads
+	if len(resumeIDs) > 0 {
+		s.executeResume(sched, resumeIDs)
+		return
+	}
+
+	// New download mode
 	var item *DownloadItem
 	var err error
 
@@ -308,6 +381,101 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 
 	// Watch the download and restore limit when done
 	go s.watchDownload(sched)
+}
+
+// executeResume resumes existing paused downloads.
+func (s *Scheduler) executeResume(sched *ScheduledDownload, resumeIDs []string) {
+	var resumed int
+	var lastErr string
+
+	for _, id := range resumeIDs {
+		if err := s.manager.ResumeDownload(id); err != nil {
+			log.Printf("Failed to resume %s: %v", id, err)
+			lastErr = err.Error()
+		} else {
+			resumed++
+		}
+	}
+
+	if resumed == 0 {
+		s.mu.Lock()
+		sched.Status = ScheduleStatusError
+		sched.Error = fmt.Sprintf("failed to resume any downloads: %s", lastErr)
+		s.mu.Unlock()
+		s.restoreLimit()
+		s.saveSchedules()
+		return
+	}
+
+	log.Printf("Resumed %d/%d downloads for schedule %s", resumed, len(resumeIDs), sched.ID)
+
+	// If it's a group, watch the group; otherwise watch the single download
+	s.mu.RLock()
+	groupID := sched.GroupID
+	s.mu.RUnlock()
+
+	if groupID != "" {
+		go s.watchGroup(sched, groupID)
+	} else if len(resumeIDs) == 1 {
+		s.mu.Lock()
+		sched.DownloadID = resumeIDs[0]
+		s.mu.Unlock()
+		s.saveSchedules()
+		go s.watchDownload(sched)
+	} else {
+		// Multiple non-group items — watch them all
+		go s.watchResumeIDs(sched, resumeIDs)
+	}
+}
+
+// watchResumeIDs watches a set of individual download IDs until all are done.
+func (s *Scheduler) watchResumeIDs(sched *ScheduledDownload, ids []string) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			completed := 0
+			errored := 0
+			var lastErr string
+			for _, id := range ids {
+				item, err := s.manager.GetDownload(id)
+				if err != nil {
+					continue
+				}
+				switch item.Status {
+				case StatusCompleted:
+					completed++
+				case StatusError:
+					errored++
+					lastErr = item.Error
+				case StatusCancelled:
+					errored++
+				}
+			}
+
+			if completed+errored == len(ids) {
+				if completed == len(ids) {
+					now := time.Now()
+					s.mu.Lock()
+					sched.Status = ScheduleStatusCompleted
+					sched.CompletedAt = &now
+					s.mu.Unlock()
+				} else {
+					s.mu.Lock()
+					sched.Status = ScheduleStatusError
+					sched.Error = lastErr
+					s.mu.Unlock()
+				}
+				s.restoreLimit()
+				s.saveSchedules()
+				return
+			}
+		}
+	}
 }
 
 func (s *Scheduler) watchDownload(sched *ScheduledDownload) {

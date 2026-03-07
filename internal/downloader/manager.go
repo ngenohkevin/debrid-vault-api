@@ -126,6 +126,38 @@ func (m *Manager) GetDownloadsByGroup(groupID string) []DownloadItem {
 	return items
 }
 
+// CheckResumable checks if a download can be resumed later.
+// Returns an error describing why it can't be resumed.
+func (m *Manager) CheckResumable(id string) error {
+	m.mu.RLock()
+	item, ok := m.downloads[id]
+	if !ok {
+		m.mu.RUnlock()
+		return fmt.Errorf("download not found: %s", id)
+	}
+	status := item.Status
+	hasURL := item.DownloadURL != ""
+	hasSource := item.Source != ""
+	name := item.Name
+	m.mu.RUnlock()
+
+	// Completed/cancelled items can't be scheduled
+	if status == StatusCompleted || status == StatusCancelled {
+		return fmt.Errorf("download already %s", status)
+	}
+
+	// Need either a download URL (for resume) or a source (for re-unrestrict)
+	if !hasURL && !hasSource {
+		return fmt.Errorf("no download URL or source to resume from")
+	}
+
+	if name == "" || name == "Resolving magnet..." || name == "Resolving RD link..." {
+		return fmt.Errorf("download hasn't resolved yet, wait for it to start")
+	}
+
+	return nil
+}
+
 func (m *Manager) CancelDownload(id string) error {
 	m.mu.Lock()
 	cancel, ok := m.cancels[id]
