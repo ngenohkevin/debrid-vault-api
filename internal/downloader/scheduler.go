@@ -144,10 +144,11 @@ func (s *Scheduler) ScheduleExisting(downloadID string, scheduledAt time.Time, s
 		return nil, fmt.Errorf("no resumable downloads found")
 	}
 
-	// Pause all the downloads
+	// Pause all the downloads and mark them as scheduled
 	for _, id := range resumeIDs {
 		_ = s.manager.PauseDownload(id)
 	}
+	s.manager.setScheduledFor(resumeIDs, &scheduledAt)
 
 	sched := &ScheduledDownload{
 		ID:             uuid.New().String()[:8],

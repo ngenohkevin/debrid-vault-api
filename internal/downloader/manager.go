@@ -257,6 +257,7 @@ func (m *Manager) ResumeDownload(id string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[id] = cancel
 	item.Status = StatusQueued
+	item.ScheduledFor = nil
 	groupID := item.GroupID
 
 	// Mark other paused items in the same group as queued (visual only — no goroutines)
@@ -266,6 +267,7 @@ func (m *Manager) ResumeDownload(id string) error {
 			if other.ID != id && other.GroupID == groupID && other.Status == StatusPaused &&
 				other.DownloadURL != "" && other.Name != "" {
 				other.Status = StatusQueued
+				other.ScheduledFor = nil
 			}
 		}
 	}
@@ -941,6 +943,19 @@ func (m *Manager) autoResumeNext(groupID string) {
 		log.Printf("Auto-resuming next download: %s (%s)", candidate.ID, candidate.Name)
 		_ = m.ResumeDownload(candidate.ID)
 	}
+}
+
+// setScheduledFor marks downloads as scheduled for a specific time.
+func (m *Manager) setScheduledFor(ids []string, t *time.Time) {
+	m.mu.Lock()
+	for _, id := range ids {
+		if item, ok := m.downloads[id]; ok {
+			item.ScheduledFor = t
+			m.emit(Event{Type: "progress", Data: *item})
+		}
+	}
+	m.mu.Unlock()
+	m.saveHistory()
 }
 
 func (m *Manager) updateStatus(item *DownloadItem, status Status, errMsg string) {

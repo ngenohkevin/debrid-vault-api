@@ -108,6 +108,7 @@ type DownloadItem struct {
 	DownloadURL    string         `json:"downloadUrl,omitempty"`
 	FilePath       string         `json:"filePath,omitempty"`
 	SubtitleStatus SubtitleStatus `json:"subtitleStatus"`
+	ScheduledFor   *time.Time     `json:"scheduledFor,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	CompletedAt    *time.Time     `json:"completedAt,omitempty"`
 }
