@@ -114,6 +114,18 @@ func (m *Manager) GetDownload(id string) (*DownloadItem, error) {
 	return &cp, nil
 }
 
+func (m *Manager) GetDownloadsByGroup(groupID string) []DownloadItem {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var items []DownloadItem
+	for _, item := range m.downloads {
+		if item.GroupID == groupID {
+			items = append(items, *item)
+		}
+	}
+	return items
+}
+
 func (m *Manager) CancelDownload(id string) error {
 	m.mu.Lock()
 	cancel, ok := m.cancels[id]
@@ -473,33 +485,61 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 		m.emit(Event{Type: "progress", Data: *item})
 
 		if info.Status == "downloaded" {
-			// For multi-file torrents (e.g. TV series), use the torrent name as the parent folder
-			if len(info.Links) > 1 {
-				m.mu.Lock()
-				item.Folder = info.Filename
-				m.mu.Unlock()
-			}
+			category := DetectCategory(info.Filename)
 
-			for _, link := range info.Links {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				unrestricted, err := m.rdClient.UnrestrictLink(link)
+			if len(info.Links) == 1 {
+				// Single file — download directly using the original item
+				unrestricted, err := m.rdClient.UnrestrictLink(info.Links[0])
 				if err != nil {
-					log.Printf("Failed to unrestrict link: %v", err)
-					continue
+					m.setError(item, fmt.Sprintf("Failed to unrestrict link: %v", err))
+					_ = m.rdClient.DeleteTorrent(resp.ID)
+					return
 				}
-
 				m.mu.Lock()
 				item.DownloadURL = unrestricted.Download
 				item.Name = unrestricted.Filename
 				item.Size = unrestricted.Filesize
+				item.Category = category
+				m.mu.Unlock()
+				m.downloadFile(ctx, item)
+			} else {
+				// Multi-file torrent — create individual items per file (like batch downloads)
+				groupID := uuid.New().String()[:8]
+				folder := info.Filename
+
+				// Update the original item as group parent so schedule can track via GroupID
+				m.mu.Lock()
+				item.GroupID = groupID
+				item.GroupName = info.Filename
+				item.Category = category
+				item.Folder = folder
 				m.mu.Unlock()
 
-				m.downloadFile(ctx, item)
+				// Release the semaphore slot so file downloads can use it
+				<-m.sem
+
+				for _, link := range info.Links {
+					select {
+					case <-ctx.Done():
+						_ = m.rdClient.DeleteTorrent(resp.ID)
+						return
+					default:
+					}
+
+					_, err := m.addRDLinkInternal(link, category, folder, groupID, info.Filename)
+					if err != nil {
+						log.Printf("Failed to add file from magnet: %v", err)
+						continue
+					}
+				}
+
+				// Remove the resolver item now that individual items exist
+				m.mu.Lock()
+				delete(m.downloads, item.ID)
+				delete(m.cancels, item.ID)
+				m.mu.Unlock()
+				m.emit(Event{Type: "removed", Data: *item})
+				m.saveHistory()
 			}
 
 			_ = m.rdClient.DeleteTorrent(resp.ID)

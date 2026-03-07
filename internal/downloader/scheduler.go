@@ -36,6 +36,7 @@ type ScheduledDownload struct {
 	Status         ScheduleStatus `json:"status"`
 	Error          string         `json:"error,omitempty"`
 	DownloadID     string         `json:"downloadId,omitempty"`
+	GroupID        string         `json:"groupId,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	CompletedAt    *time.Time     `json:"completedAt,omitempty"`
 }
@@ -149,14 +150,24 @@ func (s *Scheduler) CancelSchedule(id string) error {
 		return fmt.Errorf("schedule not in cancellable state: %s", sched.Status)
 	}
 	downloadID := sched.DownloadID
+	groupID := sched.GroupID
 	sched.Status = ScheduleStatusCancelled
 	s.mu.Unlock()
 
-	// Cancel the underlying download if running
+	// Cancel group downloads if multi-file
+	if groupID != "" {
+		items := s.manager.GetDownloadsByGroup(groupID)
+		for _, item := range items {
+			_ = s.manager.CancelDownload(item.ID)
+		}
+	}
+
+	// Cancel the original download if running
 	if downloadID != "" {
 		_ = s.manager.CancelDownload(downloadID)
 	}
 
+	s.restoreLimit()
 	s.saveSchedules()
 	return nil
 }
@@ -169,14 +180,24 @@ func (s *Scheduler) RemoveSchedule(id string) error {
 		return fmt.Errorf("schedule not found: %s", id)
 	}
 	downloadID := sched.DownloadID
+	groupID := sched.GroupID
 	status := sched.Status
 	delete(s.schedules, id)
 	s.mu.Unlock()
 
-	// Only clean up the underlying download if the schedule hasn't completed
-	if downloadID != "" && status != ScheduleStatusCompleted {
-		_ = s.manager.CancelDownload(downloadID)
-		_ = s.manager.RemoveDownload(downloadID)
+	// Only clean up underlying downloads if the schedule hasn't completed
+	if status != ScheduleStatusCompleted {
+		if groupID != "" {
+			items := s.manager.GetDownloadsByGroup(groupID)
+			for _, item := range items {
+				_ = s.manager.CancelDownload(item.ID)
+				_ = s.manager.RemoveDownload(item.ID)
+			}
+		}
+		if downloadID != "" {
+			_ = s.manager.CancelDownload(downloadID)
+			_ = s.manager.RemoveDownload(downloadID)
+		}
 	}
 
 	s.saveSchedules()
@@ -286,21 +307,69 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 	s.saveSchedules()
 
 	// Watch the download and restore limit when done
-	go s.watchDownload(sched, item.ID)
+	go s.watchDownload(sched)
 }
 
-func (s *Scheduler) watchDownload(sched *ScheduledDownload, downloadID string) {
+func (s *Scheduler) watchDownload(sched *ScheduledDownload) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+
+	downloadID := sched.DownloadID
+	notFoundCount := 0
 
 	for {
 		select {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
+			// Check if the original download spawned a group (multi-file magnet)
+			s.mu.RLock()
+			groupID := sched.GroupID
+			s.mu.RUnlock()
+
+			if groupID != "" {
+				// Track the group of downloads
+				s.watchGroup(sched, groupID)
+				return
+			}
+
 			item, err := s.manager.GetDownload(downloadID)
 			if err != nil {
+				notFoundCount++
+				// The original item may have been replaced by group items
+				// Check if a group was created with this download's ID as source
+				if notFoundCount >= 3 {
+					// Look for group items that the magnet spawned
+					items := s.manager.GetDownloads()
+					for _, it := range items {
+						if it.GroupID != "" && it.Source != "" {
+							// Found group items — store groupID and switch to group tracking
+							s.mu.Lock()
+							sched.GroupID = it.GroupID
+							sched.Name = it.GroupName
+							sched.Category = it.Category
+							s.mu.Unlock()
+							s.saveSchedules()
+							s.watchGroup(sched, it.GroupID)
+							return
+						}
+					}
+				}
 				continue
+			}
+			notFoundCount = 0
+
+			// Check if this download now has a GroupID (magnet resolved to multi-file)
+			if item.GroupID != "" {
+				s.mu.Lock()
+				sched.GroupID = item.GroupID
+				sched.Name = item.GroupName
+				sched.Category = item.Category
+				s.mu.Unlock()
+				s.saveSchedules()
+				// Original item will be removed, switch to group tracking
+				s.watchGroup(sched, item.GroupID)
+				return
 			}
 
 			// Update schedule name and category from resolved download
@@ -346,6 +415,81 @@ func (s *Scheduler) watchDownload(sched *ScheduledDownload, downloadID string) {
 			}
 		}
 	}
+}
+
+// watchGroup tracks a group of downloads until all are completed or any error/cancel occurs.
+func (s *Scheduler) watchGroup(sched *ScheduledDownload, groupID string) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			items := s.manager.GetDownloadsByGroup(groupID)
+			if len(items) == 0 {
+				continue
+			}
+
+			completed := 0
+			var lastErr string
+			cancelled := false
+			for _, item := range items {
+				switch item.Status {
+				case StatusCompleted:
+					completed++
+				case StatusError:
+					lastErr = item.Error
+				case StatusCancelled:
+					cancelled = true
+				}
+			}
+
+			if cancelled {
+				s.mu.Lock()
+				sched.Status = ScheduleStatusError
+				sched.Error = "download cancelled"
+				s.mu.Unlock()
+				s.restoreLimit()
+				s.saveSchedules()
+				return
+			}
+
+			if lastErr != "" && completed+countStatus(items, StatusError) == len(items) {
+				// All done but some errored
+				s.mu.Lock()
+				sched.Status = ScheduleStatusError
+				sched.Error = lastErr
+				s.mu.Unlock()
+				s.restoreLimit()
+				s.saveSchedules()
+				return
+			}
+
+			if completed == len(items) {
+				now := time.Now()
+				s.mu.Lock()
+				sched.Status = ScheduleStatusCompleted
+				sched.CompletedAt = &now
+				s.mu.Unlock()
+				s.restoreLimit()
+				s.saveSchedules()
+				log.Printf("Scheduled group download completed: %s (%d files)", sched.ID, len(items))
+				return
+			}
+		}
+	}
+}
+
+func countStatus(items []DownloadItem, status Status) int {
+	n := 0
+	for _, item := range items {
+		if item.Status == status {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Scheduler) restoreLimit() {
@@ -429,7 +573,7 @@ func (s *Scheduler) retryInterrupted() {
 						s.manager.cfg.SpeedLimitMbps = sched.SpeedLimitMbps
 					}
 
-					go s.watchDownload(sched, sched.DownloadID)
+					go s.watchDownload(sched)
 					s.saveSchedules()
 					continue
 				}
