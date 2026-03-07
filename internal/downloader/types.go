@@ -49,10 +49,28 @@ const (
 )
 
 // subtitleIndicators are filename patterns that suggest embedded subtitles.
-var subtitleIndicators = regexp.MustCompile(`(?i)(\.mkv$|MULTI[._\s]?SUB|SUBBED|[._\s]SUBS[._\s]|SUBTITLES|DUAL[._\s]AUDIO|MULTI[._\s]|ESub|HCSub|HC[._\s]SUB|REMUX|BluRay.*REMUX)`)
+// BluRay releases, multi-language, REMUX, MKV, and explicit subtitle tags.
+var subtitleIndicators = regexp.MustCompile(`(?i)(` +
+	`\.mkv$` + // MKV container
+	`|MULTI[._\s]?SUB` + // MULTI.SUB, MULTISUB
+	`|SUBBED` + // Subbed releases
+	`|[._\s]SUBS[._\s]` + // .SUBS.
+	`|SUBTITLES` + // Explicit subtitle tag
+	`|DUAL[._\s]?AUDIO` + // Dual audio often has subs
+	`|MULTi[._\s]` + // MULTi releases (multi-language)
+	`|ESub|HCSub|HC[._\s]SUB` + // Hardcoded/embedded sub tags
+	`|REMUX` + // REMUX always has subs
+	`|BluRay` + // BluRay releases almost always have subs
+	`|[._\s]ITA[._\s-]ENG|[._\s]ENG[._\s-]ITA` + // Italian+English multi-language
+	`|[._\s]Ger[._\s-]Eng|[._\s]Eng[._\s-]Ger` + // German+English
+	`|[._\s]DUAL[._\s]` + // DUAL (without AUDIO)
+	`|[._\s]DV[._\s]` + // Dolby Vision (high quality releases almost always have subs)
+	`|EN\+FR|FR\+EN|ITA\+ENG` + // Language combos with +
+	`)`)
 
 // subtitleUnlikelyIndicators are patterns that suggest no embedded subtitles.
-var subtitleUnlikelyIndicators = regexp.MustCompile(`(?i)(\.mp4$|HDCAM|CAM[._\s]|TS[._\s]|TELESYNC|WEBRip.*x264|YIFY|YTS)`)
+// Note: .mp4 is NOT included — many .mp4 releases do have embedded subs.
+var subtitleUnlikelyIndicators = regexp.MustCompile(`(?i)(HDCAM|CAM[._\s]|TS[._\s]|TELESYNC|YIFY|YTS)`)
 
 // DetectSubtitleStatus analyzes a filename to predict embedded subtitle likelihood.
 func DetectSubtitleStatus(filename string) SubtitleStatus {
