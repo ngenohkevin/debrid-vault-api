@@ -473,6 +473,13 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 		m.emit(Event{Type: "progress", Data: *item})
 
 		if info.Status == "downloaded" {
+			// For multi-file torrents (e.g. TV series), use the torrent name as the parent folder
+			if len(info.Links) > 1 {
+				m.mu.Lock()
+				item.Folder = info.Filename
+				m.mu.Unlock()
+			}
+
 			for _, link := range info.Links {
 				select {
 				case <-ctx.Done():

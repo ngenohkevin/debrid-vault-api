@@ -302,6 +302,25 @@ func (s *Scheduler) watchDownload(sched *ScheduledDownload, downloadID string) {
 			if err != nil {
 				continue
 			}
+
+			// Update schedule name and category from resolved download
+			if item.Name != "" && item.Name != "Resolving magnet..." && item.Name != "Resolving RD link..." {
+				s.mu.Lock()
+				changed := false
+				if sched.Name == "" || sched.Name != item.Name {
+					sched.Name = item.Name
+					changed = true
+				}
+				if item.Category != "" && sched.Category != item.Category {
+					sched.Category = item.Category
+					changed = true
+				}
+				s.mu.Unlock()
+				if changed {
+					s.saveSchedules()
+				}
+			}
+
 			switch item.Status {
 			case StatusCompleted:
 				now := time.Now()
