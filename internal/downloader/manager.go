@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/media"
 	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
 )
 
@@ -449,13 +450,14 @@ func (m *Manager) addRDLinkInternal(link string, category Category, folder, grou
 
 func (m *Manager) AddDirectURL(downloadURL, name string, category Category) (*DownloadItem, error) {
 	item := &DownloadItem{
-		ID:          uuid.New().String()[:8],
-		Name:        name,
-		Category:    category,
-		Status:      StatusPending,
-		Source:      downloadURL,
-		DownloadURL: downloadURL,
-		CreatedAt:   time.Now(),
+		ID:             uuid.New().String()[:8],
+		Name:           name,
+		Category:       category,
+		Status:         StatusPending,
+		Source:         downloadURL,
+		DownloadURL:    downloadURL,
+		SubtitleStatus: DetectSubtitleStatus(name),
+		CreatedAt:      time.Now(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -532,6 +534,7 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 				item.Name = unrestricted.Filename
 				item.Size = unrestricted.Filesize
 				item.Category = category
+				item.SubtitleStatus = DetectSubtitleStatus(unrestricted.Filename)
 				m.mu.Unlock()
 				m.downloadFile(ctx, item)
 			} else {
@@ -607,6 +610,7 @@ func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	item.Size = unrestricted.Filesize
 	// Auto-correct category based on actual filename
 	item.Category = DetectCategory(unrestricted.Filename)
+	item.SubtitleStatus = DetectSubtitleStatus(unrestricted.Filename)
 	m.mu.Unlock()
 
 	m.downloadFileWithEngine(ctx, item)
@@ -848,6 +852,13 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 		return
 	}
 
+	// Probe for actual embedded subtitles post-download
+	hasSubs, _ := media.ProbeSubtitles(finalPath)
+	subStatus := SubtitleNone
+	if hasSubs {
+		subStatus = SubtitleConfirmed
+	}
+
 	now := time.Now()
 	m.mu.Lock()
 	item.Status = StatusCompleted
@@ -856,6 +867,7 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 	item.CompletedAt = &now
 	item.Speed = 0
 	item.ETA = 0
+	item.SubtitleStatus = subStatus
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "completed", Data: *item})

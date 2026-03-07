@@ -50,14 +50,20 @@ func (l *Library) ListMedia(category string) ([]MediaFile, error) {
 			if err != nil {
 				continue
 			}
-			files = append(files, MediaFile{
+			mf := MediaFile{
 				Name:     entry.Name(),
 				Path:     filepath.Join(d.path, entry.Name()),
 				Size:     info.Size(),
 				ModTime:  info.ModTime(),
 				IsDir:    entry.IsDir(),
 				Category: d.cat,
-			})
+			}
+			if !entry.IsDir() {
+				hasSubs, tracks := ProbeSubtitles(mf.Path)
+				mf.HasSubtitles = &hasSubs
+				mf.SubtitleTracks = tracks
+			}
+			files = append(files, mf)
 		}
 	}
 	return files, nil
@@ -129,6 +135,66 @@ func (l *Library) MoveMedia(path string, toCategory string) (string, error) {
 	}
 
 	return destPath, nil
+}
+
+// ProbeSubtitlesForPath probes a file or all video files in a directory for subtitles.
+func (l *Library) ProbeSubtitlesForPath(path string) ([]MediaFile, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path")
+	}
+	moviesAbs, _ := filepath.Abs(l.cfg.MoviesDir)
+	tvAbs, _ := filepath.Abs(l.cfg.TVShowsDir)
+
+	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) {
+		return nil, fmt.Errorf("path not in media directories")
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("path not found")
+	}
+
+	var results []MediaFile
+	if !info.IsDir() {
+		hasSubs, tracks := ProbeSubtitles(absPath)
+		results = append(results, MediaFile{
+			Name:           info.Name(),
+			Path:           absPath,
+			Size:           info.Size(),
+			ModTime:        info.ModTime(),
+			HasSubtitles:   &hasSubs,
+			SubtitleTracks: tracks,
+		})
+		return results, nil
+	}
+
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		entryInfo, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		fullPath := filepath.Join(absPath, entry.Name())
+		hasSubs, tracks := ProbeSubtitles(fullPath)
+		if hasSubs {
+			results = append(results, MediaFile{
+				Name:           entry.Name(),
+				Path:           fullPath,
+				Size:           entryInfo.Size(),
+				ModTime:        entryInfo.ModTime(),
+				HasSubtitles:   &hasSubs,
+				SubtitleTracks: tracks,
+			})
+		}
+	}
+	return results, nil
 }
 
 func (l *Library) GetStorageInfo() (*StorageInfo, error) {

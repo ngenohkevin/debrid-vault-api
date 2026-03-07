@@ -63,6 +63,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.GET("/library/search", s.searchLibrary)
 		api.POST("/library/move", s.moveMedia)
 		api.DELETE("/library/*path", s.deleteMedia)
+		api.GET("/library/subtitles", s.probeSubtitles)
 	}
 }
 
@@ -239,6 +240,11 @@ func (s *Server) getRDUser(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+type rdDownloadWithSubs struct {
+	realdebrid.Download
+	SubtitleStatus downloader.SubtitleStatus `json:"subtitleStatus"`
+}
+
 func (s *Server) getRDDownloads(c *gin.Context) {
 	limit := 50
 	if l := c.Query("limit"); l != "" {
@@ -251,10 +257,19 @@ func (s *Server) getRDDownloads(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if downloads == nil {
-		downloads = []realdebrid.Download{}
+	result := make([]rdDownloadWithSubs, len(downloads))
+	for i, d := range downloads {
+		result[i] = rdDownloadWithSubs{
+			Download:       d,
+			SubtitleStatus: downloader.DetectSubtitleStatus(d.Filename),
+		}
 	}
-	c.JSON(http.StatusOK, downloads)
+	c.JSON(http.StatusOK, result)
+}
+
+type rdTorrentWithSubs struct {
+	realdebrid.Torrent
+	SubtitleStatus downloader.SubtitleStatus `json:"subtitleStatus"`
 }
 
 func (s *Server) getRDTorrents(c *gin.Context) {
@@ -263,7 +278,14 @@ func (s *Server) getRDTorrents(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, torrents)
+	result := make([]rdTorrentWithSubs, len(torrents))
+	for i, t := range torrents {
+		result[i] = rdTorrentWithSubs{
+			Torrent:        t,
+			SubtitleStatus: downloader.DetectSubtitleStatus(t.Filename),
+		}
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) getRDTorrentInfo(c *gin.Context) {
@@ -272,7 +294,10 @@ func (s *Server) getRDTorrentInfo(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, torrent)
+	c.JSON(http.StatusOK, rdTorrentWithSubs{
+		Torrent:        *torrent,
+		SubtitleStatus: downloader.DetectSubtitleStatus(torrent.Filename),
+	})
 }
 
 func (s *Server) invalidateRDCache(c *gin.Context) {
@@ -356,6 +381,21 @@ func (s *Server) deleteMedia(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func (s *Server) probeSubtitles(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path parameter is required"})
+		return
+	}
+
+	info, err := s.library.ProbeSubtitlesForPath(path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, info)
 }
 
 func (s *Server) pauseDownload(c *gin.Context) {
@@ -590,8 +630,5 @@ func (s *Server) removeSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "removed"})
 }
 
-// Ensure imports are used
-var (
-	_ realdebrid.Download
-	_ media.MediaFile
-)
+// Ensure import is used
+var _ media.MediaFile
