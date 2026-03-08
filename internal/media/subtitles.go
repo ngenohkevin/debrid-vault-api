@@ -17,11 +17,11 @@ type ffprobeOutput struct {
 }
 
 type ffprobeStream struct {
-	Index     int               `json:"index"`
-	CodecName string            `json:"codec_name"`
-	CodecType string            `json:"codec_type"`
-	Tags      map[string]string `json:"tags,omitempty"`
-	Disposition map[string]int  `json:"disposition,omitempty"`
+	Index       int               `json:"index"`
+	CodecName   string            `json:"codec_name"`
+	CodecType   string            `json:"codec_type"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Disposition map[string]int    `json:"disposition,omitempty"`
 }
 
 // subtitleCache caches ffprobe results keyed by filepath.
@@ -32,9 +32,9 @@ type subtitleCache struct {
 }
 
 type subtitleCacheEntry struct {
-	modTime  time.Time
-	hasSubs  bool
-	tracks   []SubtitleTrack
+	modTime time.Time
+	hasSubs bool
+	tracks  []SubtitleTrack
 }
 
 var subCache = &subtitleCache{

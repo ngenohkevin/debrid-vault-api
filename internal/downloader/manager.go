@@ -903,7 +903,7 @@ func (m *Manager) autoResumeNext(groupID string) {
 	var sameGroup, starved, fallback *DownloadItem
 	for _, item := range m.downloads {
 		isCandidate := (item.Status == StatusPaused || (item.Status == StatusQueued && m.cancels[item.ID] == nil)) &&
-			item.DownloadURL != "" && item.Name != ""
+			item.DownloadURL != "" && item.Name != "" && item.ScheduledFor == nil
 		if !isCandidate {
 			continue
 		}
@@ -1039,7 +1039,10 @@ func (m *Manager) loadHistory() {
 				item.ETA = 0
 				item.Error = ""
 				m.downloads[item.ID] = &item
-				toResume = append(toResume, m.downloads[item.ID])
+				// Don't auto-resume if scheduled for later
+				if item.ScheduledFor == nil {
+					toResume = append(toResume, m.downloads[item.ID])
+				}
 				continue
 			}
 			// No URL — can't resume, mark as error
@@ -1053,12 +1056,8 @@ func (m *Manager) loadHistory() {
 			item.Error = "interrupted by restart"
 			item.Speed = 0
 		}
-		// Auto-resume paused downloads that were interrupted by shutdown
-		if item.Status == StatusPaused && item.DownloadURL != "" && item.Name != "" {
-			m.downloads[item.ID] = &item
-			toResume = append(toResume, m.downloads[item.ID])
-			continue
-		}
+		// Keep paused downloads as-is — they were intentionally paused by the user
+		// Only downloads that were StatusDownloading at crash time get auto-resumed (handled above)
 		m.downloads[item.ID] = &item
 	}
 

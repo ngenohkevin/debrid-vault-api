@@ -41,11 +41,11 @@ func DetectCategory(filename string) Category {
 type SubtitleStatus string
 
 const (
-	SubtitleLikely   SubtitleStatus = "likely"
-	SubtitleUnlikely SubtitleStatus = "unlikely"
-	SubtitleUnknown  SubtitleStatus = "unknown"
+	SubtitleLikely    SubtitleStatus = "likely"
+	SubtitleUnlikely  SubtitleStatus = "unlikely"
+	SubtitleUnknown   SubtitleStatus = "unknown"
 	SubtitleConfirmed SubtitleStatus = "confirmed"
-	SubtitleNone     SubtitleStatus = "none"
+	SubtitleNone      SubtitleStatus = "none"
 )
 
 // subtitleIndicators are filename patterns that suggest embedded subtitles.
