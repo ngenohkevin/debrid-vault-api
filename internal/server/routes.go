@@ -76,11 +76,12 @@ func (s *Server) healthCheck(c *gin.Context) {
 
 func (s *Server) listProviders(c *gin.Context) {
 	type providerInfo struct {
-		Name string `json:"name"`
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
 	}
 	providers := make([]providerInfo, 0, len(s.providers))
-	for name := range s.providers {
-		providers = append(providers, providerInfo{Name: name})
+	for name, p := range s.providers {
+		providers = append(providers, providerInfo{Name: name, DisplayName: p.Name()})
 	}
 	c.JSON(http.StatusOK, providers)
 }
