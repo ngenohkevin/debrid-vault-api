@@ -248,18 +248,8 @@ func (c *Client) UnrestrictLink(link string) (*debrid.UnrestrictedLink, error) {
 			return nil, fmt.Errorf("TorBox: %s", resp.Detail)
 		}
 
-		// Extract filename from the download URL or torrent info
-		filename := filenameFromURL(resp.Data)
-		if filename == "" {
-			filename = filenameFromTBLink(c, path)
-		}
-
-		// Get filesize from content-length header
-		var filesize int64
-		if headResp, err := c.httpClient.Head(resp.Data); err == nil {
-			filesize = headResp.ContentLength
-			headResp.Body.Close()
-		}
+		// Look up real filename and size from torrent info (TorBox CDN URLs only contain UUIDs)
+		filename, filesize := fileInfoFromTBLink(c, path)
 
 		return &debrid.UnrestrictedLink{
 			Download: resp.Data,
@@ -345,22 +335,22 @@ func filenameFromURL(downloadURL string) string {
 	return name
 }
 
-// filenameFromTBLink looks up the filename from torrent info using the tb:// path params.
-func filenameFromTBLink(c *Client, params string) string {
+// fileInfoFromTBLink looks up filename and size from torrent info using tb:// path params.
+func fileInfoFromTBLink(c *Client, params string) (string, int64) {
 	// params looks like "torrent_id=123&file_id=456"
 	vals, err := url.ParseQuery(params)
 	if err != nil {
-		return "download"
+		return "download", 0
 	}
 	torrentID := vals.Get("torrent_id")
 	fileIDStr := vals.Get("file_id")
 	if torrentID == "" {
-		return "download"
+		return "download", 0
 	}
 
 	info, err := c.GetTorrentInfo(torrentID)
 	if err != nil {
-		return "download"
+		return "download", 0
 	}
 
 	if fileIDStr != "" {
@@ -369,12 +359,12 @@ func filenameFromTBLink(c *Client, params string) string {
 			if f.ID == fileID {
 				// Extract just the filename from the path
 				parts := strings.Split(f.Path, "/")
-				return parts[len(parts)-1]
+				return parts[len(parts)-1], f.Bytes
 			}
 		}
 	}
 
-	return info.Filename
+	return info.Filename, info.Bytes
 }
 
 func convertTorrent(t tbTorrent) debrid.Torrent {
