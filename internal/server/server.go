@@ -13,20 +13,40 @@ import (
 
 type Server struct {
 	cfg       *config.Config
-	rdClient  debrid.Provider
+	providers map[string]debrid.Provider
 	dlManager *downloader.Manager
 	scheduler *downloader.Scheduler
 	library   *media.Library
 }
 
-func New(cfg *config.Config, rdClient debrid.Provider, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library) *Server {
+func New(cfg *config.Config, providers map[string]debrid.Provider, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library) *Server {
 	return &Server{
 		cfg:       cfg,
-		rdClient:  rdClient,
+		providers: providers,
 		dlManager: dlManager,
 		scheduler: scheduler,
 		library:   library,
 	}
+}
+
+// provider returns the debrid provider by name, falling back to the first available.
+func (s *Server) provider(name string) debrid.Provider {
+	if p, ok := s.providers[name]; ok {
+		return p
+	}
+	for _, p := range s.providers {
+		return p
+	}
+	return nil
+}
+
+// providerNames returns the names of all available providers.
+func (s *Server) providerNames() []string {
+	names := make([]string, 0, len(s.providers))
+	for name := range s.providers {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (s *Server) Router() *gin.Engine {

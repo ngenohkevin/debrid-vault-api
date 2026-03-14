@@ -50,7 +50,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.GET("/settings", s.getSettings)
 		api.PUT("/settings", s.updateSettings)
 
-		// Real-Debrid
+		// Providers
+		api.GET("/providers", s.listProviders)
+
+		// Real-Debrid / Cloud
 		api.GET("/rd/user", s.getRDUser)
 		api.GET("/rd/downloads", s.getRDDownloads)
 		api.GET("/rd/torrents", s.getRDTorrents)
@@ -68,12 +71,22 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 }
 
 func (s *Server) healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "debrid-vault", "provider": s.rdClient.Name()})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "debrid-vault", "providers": s.providerNames()})
+}
+
+func (s *Server) listProviders(c *gin.Context) {
+	type providerInfo struct {
+		Name string `json:"name"`
+	}
+	providers := make([]providerInfo, 0, len(s.providers))
+	for name := range s.providers {
+		providers = append(providers, providerInfo{Name: name})
+	}
+	c.JSON(http.StatusOK, providers)
 }
 
 func (s *Server) getStatus(c *gin.Context) {
 	storage, _ := s.library.GetStorageInfo()
-	user, _ := s.rdClient.GetUser()
 
 	downloads := s.dlManager.GetDownloads()
 	active := 0
@@ -83,12 +96,20 @@ func (s *Server) getStatus(c *gin.Context) {
 		}
 	}
 
+	users := make(map[string]interface{})
+	for name, p := range s.providers {
+		user, err := p.GetUser()
+		if err == nil {
+			users[name] = user
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"storage":         storage,
 		"activeDownloads": active,
 		"totalDownloads":  len(downloads),
-		"rdUser":          user,
-		"provider":        s.rdClient.Name(),
+		"users":           users,
+		"providers":       s.providerNames(),
 	})
 }
 
@@ -106,6 +127,7 @@ func (s *Server) startDownload(c *gin.Context) {
 		Source   string              `json:"source" binding:"required"`
 		Category downloader.Category `json:"category" binding:"required"`
 		Folder   string              `json:"folder"`
+		Provider string              `json:"provider"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -117,6 +139,11 @@ func (s *Server) startDownload(c *gin.Context) {
 		return
 	}
 
+	provider := req.Provider
+	if provider == "" {
+		provider = "realdebrid"
+	}
+
 	var item *downloader.DownloadItem
 	var err error
 
@@ -125,11 +152,11 @@ func (s *Server) startDownload(c *gin.Context) {
 
 	switch {
 	case strings.HasPrefix(source, "magnet:"):
-		item, err = s.dlManager.AddMagnet(source, req.Category)
+		item, err = s.dlManager.AddMagnet(source, req.Category, provider)
 	case strings.Contains(source, "real-debrid.com/d/"):
-		item, err = s.dlManager.AddRDLink(source, req.Category, folder)
+		item, err = s.dlManager.AddRDLink(source, req.Category, folder, provider)
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
-		item, err = s.dlManager.AddDirectURL(source, "download", req.Category)
+		item, err = s.dlManager.AddDirectURL(source, "download", req.Category, provider)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "source must be a magnet link, RD link, or HTTP URL"})
 		return
@@ -147,6 +174,7 @@ func (s *Server) startBatchDownload(c *gin.Context) {
 		Links     []string            `json:"links" binding:"required"`
 		GroupName string              `json:"groupName" binding:"required"`
 		Category  downloader.Category `json:"category" binding:"required"`
+		Provider  string              `json:"provider"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -158,7 +186,12 @@ func (s *Server) startBatchDownload(c *gin.Context) {
 		return
 	}
 
-	items, err := s.dlManager.AddRDBatch(req.Links, req.GroupName, req.Category)
+	provider := req.Provider
+	if provider == "" {
+		provider = "realdebrid"
+	}
+
+	items, err := s.dlManager.AddRDBatch(req.Links, req.GroupName, req.Category, provider)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -233,7 +266,7 @@ func (s *Server) downloadEvents(c *gin.Context) {
 // Real-Debrid endpoints
 
 func (s *Server) getRDUser(c *gin.Context) {
-	user, err := s.rdClient.GetUser()
+	user, err := s.provider(c.DefaultQuery("provider", "realdebrid")).GetUser()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -253,7 +286,7 @@ func (s *Server) getRDDownloads(c *gin.Context) {
 			limit = parsed
 		}
 	}
-	downloads, err := s.rdClient.ListDownloads(limit)
+	downloads, err := s.provider(c.DefaultQuery("provider", "realdebrid")).ListDownloads(limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -274,7 +307,7 @@ type rdTorrentWithSubs struct {
 }
 
 func (s *Server) getRDTorrents(c *gin.Context) {
-	torrents, err := s.rdClient.ListTorrents()
+	torrents, err := s.provider(c.DefaultQuery("provider", "realdebrid")).ListTorrents()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -290,7 +323,7 @@ func (s *Server) getRDTorrents(c *gin.Context) {
 }
 
 func (s *Server) getRDTorrentInfo(c *gin.Context) {
-	torrent, err := s.rdClient.GetTorrentInfo(c.Param("id"))
+	torrent, err := s.provider(c.DefaultQuery("provider", "realdebrid")).GetTorrentInfo(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -302,19 +335,24 @@ func (s *Server) getRDTorrentInfo(c *gin.Context) {
 }
 
 func (s *Server) invalidateRDCache(c *gin.Context) {
-	s.rdClient.InvalidateCache()
+	s.provider(c.DefaultQuery("provider", "realdebrid")).InvalidateCache()
 	c.JSON(http.StatusOK, gin.H{"status": "cache invalidated"})
 }
 
 func (s *Server) unrestrictLink(c *gin.Context) {
 	var req struct {
-		Link string `json:"link" binding:"required"`
+		Link     string `json:"link" binding:"required"`
+		Provider string `json:"provider"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := s.rdClient.UnrestrictLink(req.Link)
+	provider := req.Provider
+	if provider == "" {
+		provider = "realdebrid"
+	}
+	result, err := s.provider(provider).UnrestrictLink(req.Link)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -467,6 +505,7 @@ func (s *Server) createSchedule(c *gin.Context) {
 		Source         string              `json:"source" binding:"required"`
 		Category       downloader.Category `json:"category" binding:"required"`
 		Folder         string              `json:"folder"`
+		Provider       string              `json:"provider"`
 		ScheduledAt    string              `json:"scheduledAt" binding:"required"`
 		SpeedLimitMbps float64             `json:"speedLimitMbps"`
 	}
@@ -491,11 +530,17 @@ func (s *Server) createSchedule(c *gin.Context) {
 		return
 	}
 
+	provider := req.Provider
+	if provider == "" {
+		provider = "realdebrid"
+	}
+
 	sched := s.scheduler.AddSchedule(
 		strings.TrimSpace(req.Name),
 		strings.TrimSpace(req.Source),
 		req.Category,
 		strings.TrimSpace(req.Folder),
+		provider,
 		scheduledAt,
 		req.SpeedLimitMbps,
 	)

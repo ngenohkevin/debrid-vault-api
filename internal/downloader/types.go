@@ -109,6 +109,7 @@ type DownloadItem struct {
 	ETA            int64          `json:"eta"`
 	Error          string         `json:"error,omitempty"`
 	Source         string         `json:"source"`
+	Provider       string         `json:"provider,omitempty"`
 	Folder         string         `json:"folder,omitempty"`
 	GroupID        string         `json:"groupId,omitempty"`
 	GroupName      string         `json:"groupName,omitempty"`

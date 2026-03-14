@@ -24,22 +24,21 @@ func main() {
 
 	cfg := config.Load()
 
-	var provider debrid.Provider
-	switch cfg.DebridProvider {
-	case "torbox":
-		if cfg.TBApiKey == "" {
-			log.Fatal("TB_API_KEY required when DEBRID_PROVIDER=torbox")
-		}
-		provider = torbox.NewClient(cfg.TBApiKey)
-	default:
-		if cfg.RDApiKey == "" {
-			log.Fatal("RD_API_KEY required when DEBRID_PROVIDER=realdebrid")
-		}
-		provider = realdebrid.NewClient(cfg.RDApiKey)
+	providers := make(map[string]debrid.Provider)
+	if cfg.RDApiKey != "" {
+		providers["realdebrid"] = realdebrid.NewClient(cfg.RDApiKey)
 	}
-	log.Printf("Using debrid provider: %s", provider.Name())
+	if cfg.TBApiKey != "" {
+		providers["torbox"] = torbox.NewClient(cfg.TBApiKey)
+	}
+	if len(providers) == 0 {
+		log.Fatal("At least one debrid API key required (RD_API_KEY or TB_API_KEY)")
+	}
+	for name := range providers {
+		log.Printf("Debrid provider enabled: %s", name)
+	}
 
-	dlManager := downloader.NewManager(cfg, provider)
+	dlManager := downloader.NewManager(cfg, providers)
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
@@ -47,7 +46,7 @@ func main() {
 	cleanupStop := make(chan struct{})
 	dlManager.StartCleanup(cleanupStop)
 
-	srv := server.New(cfg, provider, dlManager, scheduler, library)
+	srv := server.New(cfg, providers, dlManager, scheduler, library)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,

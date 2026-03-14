@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
 	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
@@ -26,12 +27,14 @@ func setupTestServer() *Server {
 		MaxSegmentsPerFile:     8,
 	}
 
-	rdClient := realdebrid.NewClient("test-key")
-	dlManager := downloader.NewManager(cfg, rdClient)
+	providers := map[string]debrid.Provider{
+		"realdebrid": realdebrid.NewClient("test-key"),
+	}
+	dlManager := downloader.NewManager(cfg, providers)
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
-	return New(cfg, rdClient, dlManager, scheduler, library)
+	return New(cfg, providers, dlManager, scheduler, library)
 }
 
 func TestHealthCheck(t *testing.T) {
@@ -158,11 +161,13 @@ func TestAPIKeyMiddleware(t *testing.T) {
 		MaxSegmentsPerFile:     8,
 	}
 
-	rdClient := realdebrid.NewClient("test-key")
-	dlManager := downloader.NewManager(cfg, rdClient)
+	providers := map[string]debrid.Provider{
+		"realdebrid": realdebrid.NewClient("test-key"),
+	}
+	dlManager := downloader.NewManager(cfg, providers)
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
-	srv := New(cfg, rdClient, dlManager, scheduler, library)
+	srv := New(cfg, providers, dlManager, scheduler, library)
 	router := srv.Router()
 
 	t.Run("health check bypasses auth", func(t *testing.T) {

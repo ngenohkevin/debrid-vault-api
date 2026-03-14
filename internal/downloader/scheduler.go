@@ -30,6 +30,7 @@ type ScheduledDownload struct {
 	Name           string         `json:"name,omitempty"`
 	Source         string         `json:"source"`
 	Category       Category       `json:"category"`
+	Provider       string         `json:"provider,omitempty"`
 	Folder         string         `json:"folder,omitempty"`
 	ScheduledAt    time.Time      `json:"scheduledAt"`
 	SpeedLimitMbps float64        `json:"speedLimitMbps"`
@@ -69,7 +70,7 @@ func (s *Scheduler) Stop() {
 	close(s.stopCh)
 }
 
-func (s *Scheduler) AddSchedule(name, source string, category Category, folder string, scheduledAt time.Time, speedLimitMbps float64) *ScheduledDownload {
+func (s *Scheduler) AddSchedule(name, source string, category Category, folder, provider string, scheduledAt time.Time, speedLimitMbps float64) *ScheduledDownload {
 	// Extract name from source if not provided
 	if name == "" {
 		if strings.HasPrefix(source, "magnet:") {
@@ -92,6 +93,7 @@ func (s *Scheduler) AddSchedule(name, source string, category Category, folder s
 		Name:           name,
 		Source:         source,
 		Category:       category,
+		Provider:       provider,
 		Folder:         folder,
 		ScheduledAt:    scheduledAt,
 		SpeedLimitMbps: speedLimitMbps,
@@ -355,14 +357,15 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 	var err error
 
 	source := sched.Source
+	provider := sched.Provider
 	switch {
 	case strings.HasPrefix(source, "magnet:"):
-		item, err = s.manager.AddMagnet(source, sched.Category)
+		item, err = s.manager.AddMagnet(source, sched.Category, provider)
 	case strings.Contains(source, "real-debrid.com/d/"):
-		item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder)
+		item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
 		name := "scheduled-download"
-		item, err = s.manager.AddDirectURL(source, name, sched.Category)
+		item, err = s.manager.AddDirectURL(source, name, sched.Category, provider)
 	default:
 		err = fmt.Errorf("unsupported source: %s", source)
 	}

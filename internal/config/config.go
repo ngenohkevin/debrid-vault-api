@@ -9,7 +9,6 @@ import (
 
 type Config struct {
 	Port                   string
-	DebridProvider         string
 	RDApiKey               string
 	TBApiKey               string
 	DownloadDir            string
@@ -31,7 +30,6 @@ type persistedSettings struct {
 func Load() *Config {
 	cfg := &Config{
 		Port:                   getEnv("PORT", "6501"),
-		DebridProvider:         getEnv("DEBRID_PROVIDER", "realdebrid"),
 		RDApiKey:               getEnv("RD_API_KEY", ""),
 		TBApiKey:               getEnv("TB_API_KEY", ""),
 		DownloadDir:            getEnv("DOWNLOAD_DIR", "/home/ngenoh/downloads/staging"),

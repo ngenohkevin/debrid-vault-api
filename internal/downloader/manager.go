@@ -20,7 +20,7 @@ import (
 
 type Manager struct {
 	cfg         *config.Config
-	rdClient    debrid.Provider
+	providers   map[string]debrid.Provider
 	engine      *DownloadEngine
 	downloads   map[string]*DownloadItem
 	cancels     map[string]context.CancelFunc
@@ -32,10 +32,10 @@ type Manager struct {
 	historyFile string
 }
 
-func NewManager(cfg *config.Config, rdClient debrid.Provider) *Manager {
+func NewManager(cfg *config.Config, providers map[string]debrid.Provider) *Manager {
 	m := &Manager{
 		cfg:         cfg,
-		rdClient:    rdClient,
+		providers:   providers,
 		engine:      NewDownloadEngine(cfg.MaxSegmentsPerFile, cfg.SpeedLimitMbps),
 		downloads:   make(map[string]*DownloadItem),
 		cancels:     make(map[string]context.CancelFunc),
@@ -45,6 +45,18 @@ func NewManager(cfg *config.Config, rdClient debrid.Provider) *Manager {
 	}
 	m.loadHistory()
 	return m
+}
+
+// provider returns the debrid provider by name, falling back to the first available.
+func (m *Manager) provider(name string) debrid.Provider {
+	if p, ok := m.providers[name]; ok {
+		return p
+	}
+	// Fall back to first available provider
+	for _, p := range m.providers {
+		return p
+	}
+	return nil
 }
 
 func (m *Manager) Engine() *DownloadEngine {
@@ -253,6 +265,7 @@ func (m *Manager) ResumeDownload(id string) error {
 	category := item.Category
 	folder := item.Folder
 	size := item.Size
+	providerName := item.Provider
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[id] = cancel
@@ -290,7 +303,7 @@ func (m *Manager) ResumeDownload(id string) error {
 
 		// Try to re-unrestrict to get a fresh URL
 		if strings.Contains(source, "real-debrid.com/d/") || !strings.HasPrefix(downloadURL, "http") {
-			unrestricted, err := m.rdClient.UnrestrictLink(source)
+			unrestricted, err := m.provider(providerName).UnrestrictLink(source)
 			if err == nil {
 				downloadURL = unrestricted.Download
 				m.mu.Lock()
@@ -384,13 +397,14 @@ func (m *Manager) RemoveDownload(id string) error {
 	return nil
 }
 
-func (m *Manager) AddMagnet(magnet string, category Category) (*DownloadItem, error) {
+func (m *Manager) AddMagnet(magnet string, category Category, provider string) (*DownloadItem, error) {
 	item := &DownloadItem{
 		ID:        uuid.New().String()[:8],
 		Name:      "Resolving magnet...",
 		Category:  category,
 		Status:    StatusPending,
 		Source:    magnet,
+		Provider:  provider,
 		CreatedAt: time.Now(),
 	}
 
@@ -406,13 +420,13 @@ func (m *Manager) AddMagnet(magnet string, category Category) (*DownloadItem, er
 	return item, nil
 }
 
-func (m *Manager) AddRDBatch(links []string, groupName string, category Category) ([]*DownloadItem, error) {
+func (m *Manager) AddRDBatch(links []string, groupName string, category Category, provider string) ([]*DownloadItem, error) {
 	groupID := uuid.New().String()[:8]
 	folder := groupName
 	var items []*DownloadItem
 
 	for _, link := range links {
-		item, err := m.addRDLinkInternal(link, category, folder, groupID, groupName)
+		item, err := m.addRDLinkInternal(link, category, folder, groupID, groupName, provider)
 		if err != nil {
 			return items, err
 		}
@@ -421,17 +435,18 @@ func (m *Manager) AddRDBatch(links []string, groupName string, category Category
 	return items, nil
 }
 
-func (m *Manager) AddRDLink(link string, category Category, folder string) (*DownloadItem, error) {
-	return m.addRDLinkInternal(link, category, folder, "", "")
+func (m *Manager) AddRDLink(link string, category Category, folder string, provider string) (*DownloadItem, error) {
+	return m.addRDLinkInternal(link, category, folder, "", "", provider)
 }
 
-func (m *Manager) addRDLinkInternal(link string, category Category, folder, groupID, groupName string) (*DownloadItem, error) {
+func (m *Manager) addRDLinkInternal(link string, category Category, folder, groupID, groupName, provider string) (*DownloadItem, error) {
 	item := &DownloadItem{
 		ID:        uuid.New().String()[:8],
 		Name:      "Resolving RD link...",
 		Category:  category,
 		Status:    StatusResolving,
 		Source:    link,
+		Provider:  provider,
 		Folder:    folder,
 		GroupID:   groupID,
 		GroupName: groupName,
@@ -450,13 +465,14 @@ func (m *Manager) addRDLinkInternal(link string, category Category, folder, grou
 	return item, nil
 }
 
-func (m *Manager) AddDirectURL(downloadURL, name string, category Category) (*DownloadItem, error) {
+func (m *Manager) AddDirectURL(downloadURL, name string, category Category, provider string) (*DownloadItem, error) {
 	item := &DownloadItem{
 		ID:             uuid.New().String()[:8],
 		Name:           name,
 		Category:       category,
 		Status:         StatusPending,
 		Source:         downloadURL,
+		Provider:       provider,
 		DownloadURL:    downloadURL,
 		SubtitleStatus: DetectSubtitleStatus(name),
 		CreatedAt:      time.Now(),
@@ -485,13 +501,13 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 
 	m.updateStatus(item, StatusResolving, "")
 
-	resp, err := m.rdClient.AddMagnet(item.Source)
+	resp, err := m.provider(item.Provider).AddMagnet(item.Source)
 	if err != nil {
 		m.setError(item, fmt.Sprintf("Failed to add magnet: %v", err))
 		return
 	}
 
-	if err := m.rdClient.SelectFiles(resp.ID, "all"); err != nil {
+	if err := m.provider(item.Provider).SelectFiles(resp.ID, "all"); err != nil {
 		m.setError(item, fmt.Sprintf("Failed to select files: %v", err))
 		return
 	}
@@ -503,7 +519,7 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 		case <-time.After(3 * time.Second):
 		}
 
-		info, err := m.rdClient.GetTorrentInfo(resp.ID)
+		info, err := m.provider(item.Provider).GetTorrentInfo(resp.ID)
 		if err != nil {
 			m.setError(item, fmt.Sprintf("Failed to get torrent info: %v", err))
 			return
@@ -530,10 +546,10 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 
 			if len(info.Links) == 1 {
 				// Single file — download directly using the original item
-				unrestricted, err := m.rdClient.UnrestrictLink(info.Links[0])
+				unrestricted, err := m.provider(item.Provider).UnrestrictLink(info.Links[0])
 				if err != nil {
 					m.setError(item, fmt.Sprintf("Failed to unrestrict link: %v", err))
-					_ = m.rdClient.DeleteTorrent(resp.ID)
+					_ = m.provider(item.Provider).DeleteTorrent(resp.ID)
 					return
 				}
 				m.mu.Lock()
@@ -563,12 +579,12 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 				for _, link := range info.Links {
 					select {
 					case <-ctx.Done():
-						_ = m.rdClient.DeleteTorrent(resp.ID)
+						_ = m.provider(item.Provider).DeleteTorrent(resp.ID)
 						return
 					default:
 					}
 
-					_, err := m.addRDLinkInternal(link, category, folder, groupID, info.Filename)
+					_, err := m.addRDLinkInternal(link, category, folder, groupID, info.Filename, item.Provider)
 					if err != nil {
 						log.Printf("Failed to add file from magnet: %v", err)
 						continue
@@ -584,7 +600,7 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 				m.saveHistory()
 			}
 
-			_ = m.rdClient.DeleteTorrent(resp.ID)
+			_ = m.provider(item.Provider).DeleteTorrent(resp.ID)
 			return
 		}
 
@@ -605,7 +621,7 @@ func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	defer func() { <-m.sem }()
 
 	// Unrestrict the link directly (no ListDownloads scan)
-	unrestricted, err := m.rdClient.UnrestrictLink(item.Source)
+	unrestricted, err := m.provider(item.Provider).UnrestrictLink(item.Source)
 	if err != nil {
 		m.setError(item, fmt.Sprintf("Failed to resolve link: %v", err))
 		return
@@ -735,7 +751,7 @@ func (m *Manager) downloadFileWithEngine(ctx context.Context, item *DownloadItem
 		}
 
 		// Re-unrestrict to get a fresh download URL
-		unrestricted, unreErr := m.rdClient.UnrestrictLink(item.Source)
+		unrestricted, unreErr := m.provider(item.Provider).UnrestrictLink(item.Source)
 		if unreErr != nil {
 			log.Printf("Re-unrestrict failed: %v (will retry)", unreErr)
 			err = fmt.Errorf("download: %v, re-unrestrict: %v", err, unreErr)
@@ -1024,6 +1040,10 @@ func (m *Manager) loadHistory() {
 	var toMove []*DownloadItem
 	for i := range items {
 		item := items[i]
+		// Default empty Provider to "realdebrid" for backward compatibility
+		if item.Provider == "" {
+			item.Provider = "realdebrid"
+		}
 		if item.Status == StatusMoving {
 			// Was moving when interrupted — check if file exists in staging
 			stagingPath := filepath.Join(m.cfg.DownloadDir, item.Name)
