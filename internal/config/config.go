@@ -13,6 +13,7 @@ type Config struct {
 	DownloadDir            string
 	MoviesDir              string
 	TVShowsDir             string
+	MusicDir               string
 	AllowedOrigins         string
 	APIKey                 string
 	MaxConcurrentDownloads int
@@ -32,6 +33,7 @@ func Load() *Config {
 		DownloadDir:            getEnv("DOWNLOAD_DIR", "/home/ngenoh/downloads/staging"),
 		MoviesDir:              getEnv("MOVIES_DIR", "/mnt/perigrine/media/movies"),
 		TVShowsDir:             getEnv("TVSHOWS_DIR", "/mnt/perigrine/media/tv-shows"),
+		MusicDir:               getEnv("MUSIC_DIR", "/mnt/perigrine/media/music"),
 		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", "*"),
 		APIKey:                 getEnv("API_KEY", ""),
 		MaxConcurrentDownloads: getEnvInt("MAX_CONCURRENT_DOWNLOADS", 4),

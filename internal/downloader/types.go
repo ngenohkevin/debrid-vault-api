@@ -25,13 +25,20 @@ type Category string
 const (
 	CategoryMovies  Category = "movies"
 	CategoryTVShows Category = "tv-shows"
+	CategoryMusic   Category = "music"
 )
 
 // tvShowPattern matches common TV episode naming: S01E01, S1E1, 1x01, etc.
 var tvShowPattern = regexp.MustCompile(`(?i)(S\d{1,2}E\d{1,2}|S\d{1,2}\.E\d{1,2}|\d{1,2}x\d{2}|[._\s]E\d{2}[._\s]|Season[._\s]?\d|COMPLETE|MINISERIES)`)
 
-// DetectCategory determines if a filename looks like a TV show or movie.
+// musicPattern matches common lossless/lossy audio file extensions.
+var musicPattern = regexp.MustCompile(`(?i)\.(flac|alac|wav|ape|dsd|dsf|dff|mp3|aac|ogg|opus|m4a|wma|aiff?)$`)
+
+// DetectCategory determines if a filename looks like a TV show, music, or movie.
 func DetectCategory(filename string) Category {
+	if musicPattern.MatchString(filename) {
+		return CategoryMusic
+	}
 	if tvShowPattern.MatchString(filename) {
 		return CategoryTVShows
 	}

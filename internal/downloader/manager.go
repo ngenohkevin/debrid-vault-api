@@ -778,6 +778,8 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 		finalDir = m.cfg.MoviesDir
 	case CategoryTVShows:
 		finalDir = m.cfg.TVShowsDir
+	case CategoryMusic:
+		finalDir = m.cfg.MusicDir
 	default:
 		finalDir = m.cfg.MoviesDir
 	}
@@ -854,11 +856,13 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 		return
 	}
 
-	// Probe for actual embedded subtitles post-download
-	hasSubs, _ := media.ProbeSubtitles(finalPath)
+	// Probe for actual embedded subtitles post-download (skip for music)
 	subStatus := SubtitleNone
-	if hasSubs {
-		subStatus = SubtitleConfirmed
+	if category != CategoryMusic {
+		hasSubs, _ := media.ProbeSubtitles(finalPath)
+		if hasSubs {
+			subStatus = SubtitleConfirmed
+		}
 	}
 
 	now := time.Now()

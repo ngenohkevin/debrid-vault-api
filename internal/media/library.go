@@ -29,10 +29,13 @@ func (l *Library) ListMedia(category string) ([]MediaFile, error) {
 		dirs = append(dirs, struct{ path, cat string }{l.cfg.MoviesDir, "movies"})
 	case "tv-shows":
 		dirs = append(dirs, struct{ path, cat string }{l.cfg.TVShowsDir, "tv-shows"})
+	case "music":
+		dirs = append(dirs, struct{ path, cat string }{l.cfg.MusicDir, "music"})
 	default:
 		dirs = append(dirs,
 			struct{ path, cat string }{l.cfg.MoviesDir, "movies"},
 			struct{ path, cat string }{l.cfg.TVShowsDir, "tv-shows"},
+			struct{ path, cat string }{l.cfg.MusicDir, "music"},
 		)
 	}
 
@@ -58,15 +61,18 @@ func (l *Library) ListMedia(category string) ([]MediaFile, error) {
 				IsDir:    entry.IsDir(),
 				Category: d.cat,
 			}
-			if entry.IsDir() {
-				// Probe first video file inside directory as representative sample
-				hasSubs, tracks := probeFirstVideoInDir(mf.Path)
-				mf.HasSubtitles = hasSubs
-				mf.SubtitleTracks = tracks
-			} else {
-				hasSubs, tracks := ProbeSubtitles(mf.Path)
-				mf.HasSubtitles = &hasSubs
-				mf.SubtitleTracks = tracks
+			// Skip subtitle probing for music files
+			if d.cat != "music" {
+				if entry.IsDir() {
+					// Probe first video file inside directory as representative sample
+					hasSubs, tracks := probeFirstVideoInDir(mf.Path)
+					mf.HasSubtitles = hasSubs
+					mf.SubtitleTracks = tracks
+				} else {
+					hasSubs, tracks := ProbeSubtitles(mf.Path)
+					mf.HasSubtitles = &hasSubs
+					mf.SubtitleTracks = tracks
+				}
 			}
 			files = append(files, mf)
 		}
@@ -97,8 +103,9 @@ func (l *Library) DeleteMedia(path string) error {
 	}
 	moviesAbs, _ := filepath.Abs(l.cfg.MoviesDir)
 	tvAbs, _ := filepath.Abs(l.cfg.TVShowsDir)
+	musicAbs, _ := filepath.Abs(l.cfg.MusicDir)
 
-	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) {
+	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) && !strings.HasPrefix(absPath, musicAbs) {
 		return fmt.Errorf("path not in media directories")
 	}
 
@@ -112,8 +119,9 @@ func (l *Library) MoveMedia(path string, toCategory string) (string, error) {
 	}
 	moviesAbs, _ := filepath.Abs(l.cfg.MoviesDir)
 	tvAbs, _ := filepath.Abs(l.cfg.TVShowsDir)
+	musicAbs, _ := filepath.Abs(l.cfg.MusicDir)
 
-	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) {
+	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) && !strings.HasPrefix(absPath, musicAbs) {
 		return "", fmt.Errorf("path not in media directories")
 	}
 
@@ -123,6 +131,8 @@ func (l *Library) MoveMedia(path string, toCategory string) (string, error) {
 		destDir = l.cfg.MoviesDir
 	case "tv-shows":
 		destDir = l.cfg.TVShowsDir
+	case "music":
+		destDir = l.cfg.MusicDir
 	default:
 		return "", fmt.Errorf("invalid category: %s", toCategory)
 	}
@@ -150,8 +160,9 @@ func (l *Library) ProbeSubtitlesForPath(path string) ([]MediaFile, error) {
 	}
 	moviesAbs, _ := filepath.Abs(l.cfg.MoviesDir)
 	tvAbs, _ := filepath.Abs(l.cfg.TVShowsDir)
+	musicAbs, _ := filepath.Abs(l.cfg.MusicDir)
 
-	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) {
+	if !strings.HasPrefix(absPath, moviesAbs) && !strings.HasPrefix(absPath, tvAbs) && !strings.HasPrefix(absPath, musicAbs) {
 		return nil, fmt.Errorf("path not in media directories")
 	}
 

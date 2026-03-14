@@ -111,8 +111,8 @@ func (s *Server) startDownload(c *gin.Context) {
 		return
 	}
 
-	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies' or 'tv-shows'"})
+	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows && req.Category != downloader.CategoryMusic {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies', 'tv-shows', or 'music'"})
 		return
 	}
 
@@ -152,8 +152,8 @@ func (s *Server) startBatchDownload(c *gin.Context) {
 		return
 	}
 
-	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies' or 'tv-shows'"})
+	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows && req.Category != downloader.CategoryMusic {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies', 'tv-shows', or 'music'"})
 		return
 	}
 
@@ -474,8 +474,8 @@ func (s *Server) createSchedule(c *gin.Context) {
 		return
 	}
 
-	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies' or 'tv-shows'"})
+	if req.Category != downloader.CategoryMovies && req.Category != downloader.CategoryTVShows && req.Category != downloader.CategoryMusic {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be 'movies', 'tv-shows', or 'music'"})
 		return
 	}
 
