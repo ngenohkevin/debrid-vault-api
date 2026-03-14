@@ -7,7 +7,10 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -229,7 +232,7 @@ func (c *Client) UnrestrictLink(link string) (*debrid.UnrestrictedLink, error) {
 	// For TorBox, we use the web download endpoint for direct URLs.
 	// When called from the magnet flow, the link is actually a TorBox download request.
 
-	// Check if this is a TorBox download request (format: "tb://torrent_id/file_id")
+	// Check if this is a TorBox download request (format: "tb://torrent_id=123&file_id=456")
 	if len(link) > 5 && link[:5] == "tb://" {
 		path := link[5:]
 		data, err := c.get("/torrents/requestdl?token=" + c.apiKey + "&" + path)
@@ -244,9 +247,24 @@ func (c *Client) UnrestrictLink(link string) (*debrid.UnrestrictedLink, error) {
 		if !resp.Success {
 			return nil, fmt.Errorf("TorBox: %s", resp.Detail)
 		}
+
+		// Extract filename from the download URL or torrent info
+		filename := filenameFromURL(resp.Data)
+		if filename == "" {
+			filename = filenameFromTBLink(c, path)
+		}
+
+		// Get filesize from content-length header
+		var filesize int64
+		if headResp, err := c.httpClient.Head(resp.Data); err == nil {
+			filesize = headResp.ContentLength
+			headResp.Body.Close()
+		}
+
 		return &debrid.UnrestrictedLink{
 			Download: resp.Data,
-			Filename: "download",
+			Filename: filename,
+			Filesize: filesize,
 		}, nil
 	}
 
@@ -308,6 +326,55 @@ func (c *Client) RequestDownloadLink(torrentID int, fileID int) (string, error) 
 		return "", fmt.Errorf("TorBox: %s", resp.Detail)
 	}
 	return resp.Data, nil
+}
+
+// filenameFromURL extracts a filename from a download URL.
+func filenameFromURL(downloadURL string) string {
+	u, err := url.Parse(downloadURL)
+	if err != nil {
+		return ""
+	}
+	name := path.Base(u.Path)
+	if name == "" || name == "." || name == "/" {
+		return ""
+	}
+	// URL-decode the filename
+	if decoded, err := url.PathUnescape(name); err == nil {
+		name = decoded
+	}
+	return name
+}
+
+// filenameFromTBLink looks up the filename from torrent info using the tb:// path params.
+func filenameFromTBLink(c *Client, params string) string {
+	// params looks like "torrent_id=123&file_id=456"
+	vals, err := url.ParseQuery(params)
+	if err != nil {
+		return "download"
+	}
+	torrentID := vals.Get("torrent_id")
+	fileIDStr := vals.Get("file_id")
+	if torrentID == "" {
+		return "download"
+	}
+
+	info, err := c.GetTorrentInfo(torrentID)
+	if err != nil {
+		return "download"
+	}
+
+	if fileIDStr != "" {
+		fileID, _ := strconv.Atoi(fileIDStr)
+		for _, f := range info.Files {
+			if f.ID == fileID {
+				// Extract just the filename from the path
+				parts := strings.Split(f.Path, "/")
+				return parts[len(parts)-1]
+			}
+		}
+	}
+
+	return info.Filename
 }
 
 func convertTorrent(t tbTorrent) debrid.Torrent {
