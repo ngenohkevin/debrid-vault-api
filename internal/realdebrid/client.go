@@ -39,6 +39,8 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+func (c *Client) Name() string { return "Real-Debrid" }
+
 func (c *Client) InvalidateCache() {
 	c.mu.Lock()
 	c.torrentsCache = nil

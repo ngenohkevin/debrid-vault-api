@@ -14,13 +14,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
-	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
 )
 
 type Manager struct {
 	cfg         *config.Config
-	rdClient    *realdebrid.Client
+	rdClient    debrid.Provider
 	engine      *DownloadEngine
 	downloads   map[string]*DownloadItem
 	cancels     map[string]context.CancelFunc
@@ -32,7 +32,7 @@ type Manager struct {
 	historyFile string
 }
 
-func NewManager(cfg *config.Config, rdClient *realdebrid.Client) *Manager {
+func NewManager(cfg *config.Config, rdClient debrid.Provider) *Manager {
 	m := &Manager{
 		cfg:         cfg,
 		rdClient:    rdClient,

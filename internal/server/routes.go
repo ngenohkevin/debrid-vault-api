@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
-	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
 )
 
 func (s *Server) registerRoutes(r *gin.Engine) {
@@ -68,7 +68,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 }
 
 func (s *Server) healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "debrid-vault"})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "debrid-vault", "provider": s.rdClient.Name()})
 }
 
 func (s *Server) getStatus(c *gin.Context) {
@@ -88,6 +88,7 @@ func (s *Server) getStatus(c *gin.Context) {
 		"activeDownloads": active,
 		"totalDownloads":  len(downloads),
 		"rdUser":          user,
+		"provider":        s.rdClient.Name(),
 	})
 }
 
@@ -241,7 +242,7 @@ func (s *Server) getRDUser(c *gin.Context) {
 }
 
 type rdDownloadWithSubs struct {
-	realdebrid.Download
+	debrid.Download
 	SubtitleStatus downloader.SubtitleStatus `json:"subtitleStatus"`
 }
 
@@ -268,7 +269,7 @@ func (s *Server) getRDDownloads(c *gin.Context) {
 }
 
 type rdTorrentWithSubs struct {
-	realdebrid.Torrent
+	debrid.Torrent
 	SubtitleStatus downloader.SubtitleStatus `json:"subtitleStatus"`
 }
 

@@ -6,20 +6,20 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
-	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
 )
 
 type Server struct {
 	cfg       *config.Config
-	rdClient  *realdebrid.Client
+	rdClient  debrid.Provider
 	dlManager *downloader.Manager
 	scheduler *downloader.Scheduler
 	library   *media.Library
 }
 
-func New(cfg *config.Config, rdClient *realdebrid.Client, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library) *Server {
+func New(cfg *config.Config, rdClient debrid.Provider, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library) *Server {
 	return &Server{
 		cfg:       cfg,
 		rdClient:  rdClient,

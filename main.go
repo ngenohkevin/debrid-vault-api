@@ -11,10 +11,12 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
 	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/server"
+	"github.com/ngenohkevin/debrid-vault-api/internal/torbox"
 )
 
 func main() {
@@ -22,8 +24,22 @@ func main() {
 
 	cfg := config.Load()
 
-	rdClient := realdebrid.NewClient(cfg.RDApiKey)
-	dlManager := downloader.NewManager(cfg, rdClient)
+	var provider debrid.Provider
+	switch cfg.DebridProvider {
+	case "torbox":
+		if cfg.TBApiKey == "" {
+			log.Fatal("TB_API_KEY required when DEBRID_PROVIDER=torbox")
+		}
+		provider = torbox.NewClient(cfg.TBApiKey)
+	default:
+		if cfg.RDApiKey == "" {
+			log.Fatal("RD_API_KEY required when DEBRID_PROVIDER=realdebrid")
+		}
+		provider = realdebrid.NewClient(cfg.RDApiKey)
+	}
+	log.Printf("Using debrid provider: %s", provider.Name())
+
+	dlManager := downloader.NewManager(cfg, provider)
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
@@ -31,7 +47,7 @@ func main() {
 	cleanupStop := make(chan struct{})
 	dlManager.StartCleanup(cleanupStop)
 
-	srv := server.New(cfg, rdClient, dlManager, scheduler, library)
+	srv := server.New(cfg, provider, dlManager, scheduler, library)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
