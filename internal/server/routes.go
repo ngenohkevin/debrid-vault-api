@@ -27,6 +27,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.POST("/downloads", s.startDownload)
 		api.POST("/downloads/batch", s.startBatchDownload)
 		api.GET("/downloads", s.listDownloads)
+		api.GET("/downloads/completed-sources", s.getCompletedSources)
 		api.GET("/downloads/events", s.downloadEvents)
 		api.GET("/downloads/:id", s.getDownload)
 		api.DELETE("/downloads/:id", s.cancelDownload)
@@ -208,6 +209,14 @@ func (s *Server) listDownloads(c *gin.Context) {
 		downloads = []downloader.DownloadItem{}
 	}
 	c.JSON(http.StatusOK, downloads)
+}
+
+func (s *Server) getCompletedSources(c *gin.Context) {
+	sources := s.dlManager.GetCompletedSources()
+	if sources == nil {
+		sources = []string{}
+	}
+	c.JSON(http.StatusOK, sources)
 }
 
 func (s *Server) getDownload(c *gin.Context) {

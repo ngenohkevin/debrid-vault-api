@@ -19,31 +19,36 @@ import (
 )
 
 type Manager struct {
-	cfg         *config.Config
-	providers   map[string]debrid.Provider
-	engine      *DownloadEngine
-	downloads   map[string]*DownloadItem
-	cancels     map[string]context.CancelFunc
-	mu          sync.RWMutex
-	subs        map[chan Event]struct{}
-	subsMu      sync.RWMutex
-	sem         chan struct{}
-	activeCount atomic.Int32
-	historyFile string
+	cfg              *config.Config
+	providers        map[string]debrid.Provider
+	engine           *DownloadEngine
+	downloads        map[string]*DownloadItem
+	cancels          map[string]context.CancelFunc
+	mu               sync.RWMutex
+	subs             map[chan Event]struct{}
+	subsMu           sync.RWMutex
+	sem              chan struct{}
+	activeCount      atomic.Int32
+	historyFile      string
+	completedSources map[string]bool
+	completedFile    string
 }
 
 func NewManager(cfg *config.Config, providers map[string]debrid.Provider) *Manager {
 	m := &Manager{
-		cfg:         cfg,
-		providers:   providers,
-		engine:      NewDownloadEngine(cfg.MaxSegmentsPerFile, cfg.SpeedLimitMbps),
-		downloads:   make(map[string]*DownloadItem),
-		cancels:     make(map[string]context.CancelFunc),
-		subs:        make(map[chan Event]struct{}),
-		sem:         make(chan struct{}, cfg.MaxConcurrentDownloads),
-		historyFile: filepath.Join(cfg.DownloadDir, ".history.json"),
+		cfg:              cfg,
+		providers:        providers,
+		engine:           NewDownloadEngine(cfg.MaxSegmentsPerFile, cfg.SpeedLimitMbps),
+		downloads:        make(map[string]*DownloadItem),
+		cancels:          make(map[string]context.CancelFunc),
+		subs:             make(map[chan Event]struct{}),
+		sem:              make(chan struct{}, cfg.MaxConcurrentDownloads),
+		historyFile:      filepath.Join(cfg.DownloadDir, ".history.json"),
+		completedSources: make(map[string]bool),
+		completedFile:    filepath.Join(cfg.DownloadDir, ".completed.json"),
 	}
 	m.loadHistory()
+	m.loadCompletedSources()
 	return m
 }
 
@@ -897,6 +902,7 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 	item.Speed = 0
 	item.ETA = 0
 	item.SubtitleStatus = subStatus
+	m.markCompleted(item.Source)
 	m.mu.Unlock()
 
 	m.emit(Event{Type: "completed", Data: *item})
@@ -1127,6 +1133,49 @@ func (m *Manager) loadHistory() {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func (m *Manager) loadCompletedSources() {
+	data, err := os.ReadFile(m.completedFile)
+	if err != nil {
+		return
+	}
+	var sources []string
+	if json.Unmarshal(data, &sources) == nil {
+		for _, s := range sources {
+			m.completedSources[s] = true
+		}
+	}
+}
+
+func (m *Manager) saveCompletedSources() {
+	m.mu.RLock()
+	sources := make([]string, 0, len(m.completedSources))
+	for s := range m.completedSources {
+		sources = append(sources, s)
+	}
+	m.mu.RUnlock()
+	data, err := json.Marshal(sources)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(m.completedFile, data, 0644)
+}
+
+func (m *Manager) markCompleted(source string) {
+	m.completedSources[source] = true
+	go m.saveCompletedSources()
+}
+
+// GetCompletedSources returns all sources that have been successfully downloaded.
+func (m *Manager) GetCompletedSources() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sources := make([]string, 0, len(m.completedSources))
+	for s := range m.completedSources {
+		sources = append(sources, s)
+	}
+	return sources
 }
 
 // cleanStagingFile removes a specific file and its .part file from the staging directory.
