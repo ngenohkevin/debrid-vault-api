@@ -156,10 +156,12 @@ func (s *Server) startDownload(c *gin.Context) {
 		item, err = s.dlManager.AddMagnet(source, req.Category, provider)
 	case strings.Contains(source, "real-debrid.com/d/"):
 		item, err = s.dlManager.AddRDLink(source, req.Category, folder, provider)
+	case strings.HasPrefix(source, "tb://"):
+		item, err = s.dlManager.AddRDLink(source, req.Category, folder, provider)
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
 		item, err = s.dlManager.AddDirectURL(source, "download", req.Category, provider)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "source must be a magnet link, RD link, or HTTP URL"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source must be a magnet link, RD link, TB link, or HTTP URL"})
 		return
 	}
 

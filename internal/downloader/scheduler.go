@@ -363,6 +363,8 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 		item, err = s.manager.AddMagnet(source, sched.Category, provider)
 	case strings.Contains(source, "real-debrid.com/d/"):
 		item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
+	case strings.HasPrefix(source, "tb://"):
+		item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
 		name := "scheduled-download"
 		item, err = s.manager.AddDirectURL(source, name, sched.Category, provider)
