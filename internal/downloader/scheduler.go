@@ -358,18 +358,30 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 
 	source := sched.Source
 	provider := sched.Provider
-	switch {
-	case strings.HasPrefix(source, "magnet:"):
-		item, err = s.manager.AddMagnet(source, sched.Category, provider)
-	case strings.Contains(source, "real-debrid.com/d/"):
-		item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
-	case strings.HasPrefix(source, "tb://"):
-		item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
-	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
-		name := "scheduled-download"
-		item, err = s.manager.AddDirectURL(source, name, sched.Category, provider)
-	default:
-		err = fmt.Errorf("unsupported source: %s", source)
+
+	// Handle batch sources (multiple links separated by |)
+	if strings.Contains(source, "|") {
+		links := strings.Split(source, "|")
+		items, batchErr := s.manager.AddRDBatch(links, sched.Name, sched.Category, provider)
+		if batchErr != nil {
+			err = batchErr
+		} else if len(items) > 0 {
+			item = items[0]
+		}
+	} else {
+		switch {
+		case strings.HasPrefix(source, "magnet:"):
+			item, err = s.manager.AddMagnet(source, sched.Category, provider)
+		case strings.Contains(source, "real-debrid.com/d/"):
+			item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
+		case strings.HasPrefix(source, "tb://"):
+			item, err = s.manager.AddRDLink(source, sched.Category, sched.Folder, provider)
+		case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
+			name := "scheduled-download"
+			item, err = s.manager.AddDirectURL(source, name, sched.Category, provider)
+		default:
+			err = fmt.Errorf("unsupported source: %s", source)
+		}
 	}
 
 	if err != nil {
