@@ -164,7 +164,7 @@ func (m *Manager) CheckResumable(id string) error {
 		return fmt.Errorf("no download URL or source to resume from")
 	}
 
-	if name == "" || name == "Resolving magnet..." || name == "Resolving RD link..." {
+	if name == "" || name == "Resolving magnet..." || name == "Resolving link..." {
 		return fmt.Errorf("download hasn't resolved yet, wait for it to start")
 	}
 
@@ -442,7 +442,7 @@ func (m *Manager) AddRDLink(link string, category Category, folder string, provi
 func (m *Manager) addRDLinkInternal(link string, category Category, folder, groupID, groupName, provider string) (*DownloadItem, error) {
 	item := &DownloadItem{
 		ID:        uuid.New().String()[:8],
-		Name:      "Resolving RD link...",
+		Name:      "Resolving link...",
 		Category:  category,
 		Status:    StatusResolving,
 		Source:    link,
