@@ -127,8 +127,8 @@ func main() {
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv.Router(),
-		WriteTimeout: 24 * time.Hour,
-		ReadTimeout:  15 * time.Second,
+		WriteTimeout:      24 * time.Hour,
+		ReadHeaderTimeout: 15 * time.Second,
 	}
 
 	go func() {
