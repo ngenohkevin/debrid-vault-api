@@ -18,6 +18,10 @@ import (
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
 )
 
+// PostMoveFunc is called after a file is moved to its final location.
+// Receives the download ID and the final file path.
+type PostMoveFunc func(id, finalPath string)
+
 type Manager struct {
 	cfg              *config.Config
 	providers        map[string]debrid.Provider
@@ -32,6 +36,42 @@ type Manager struct {
 	historyFile      string
 	completedSources map[string]bool
 	completedFile    string
+	postMoveHook     PostMoveFunc
+	metaStore        map[string]map[string]string // id -> metadata key-value pairs
+}
+
+// SetPostMoveHook sets a callback to run after a file is moved to its final location.
+func (m *Manager) SetPostMoveHook(fn PostMoveFunc) {
+	m.postMoveHook = fn
+}
+
+// SetMeta stores metadata for a download item (used for music tagging).
+func (m *Manager) SetMeta(id string, meta map[string]string) {
+	m.mu.Lock()
+	if m.metaStore == nil {
+		m.metaStore = make(map[string]map[string]string)
+	}
+	m.metaStore[id] = meta
+	m.mu.Unlock()
+}
+
+// GetMeta retrieves stored metadata for a download item.
+func (m *Manager) GetMeta(id string) map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.metaStore == nil {
+		return nil
+	}
+	return m.metaStore[id]
+}
+
+// ClearMeta removes stored metadata for a download item.
+func (m *Manager) ClearMeta(id string) {
+	m.mu.Lock()
+	if m.metaStore != nil {
+		delete(m.metaStore, id)
+	}
+	m.mu.Unlock()
 }
 
 func NewManager(cfg *config.Config, providers map[string]debrid.Provider) *Manager {
@@ -942,6 +982,11 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 	m.emit(Event{Type: "completed", Data: *item})
 	m.saveHistory()
 	log.Printf("Download complete: %s -> %s", item.Name, finalPath)
+
+	// Post-move hook (e.g. music metadata tagging)
+	if m.postMoveHook != nil {
+		go m.postMoveHook(item.ID, finalPath)
+	}
 
 	// Auto-resume next paused download in the same group
 	m.autoResumeNext(item.GroupID)

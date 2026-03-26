@@ -205,6 +205,15 @@ func (s *Server) musicDownloadTrack(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Store metadata for post-download tagging
+	s.dlManager.SetMeta(item.ID, map[string]string{
+		"title":       req.Title,
+		"artist":      req.Artist,
+		"album":       req.Album,
+		"trackNumber": fmt.Sprintf("%d", trackNum),
+	})
+
 	c.JSON(http.StatusOK, item)
 }
 
@@ -258,6 +267,23 @@ func (s *Server) musicDownloadAlbum(c *gin.Context) {
 		if err != nil {
 			continue
 		}
+
+		// Store metadata for tagging
+		year := album.ReleaseDate
+		if len(year) >= 4 {
+			year = year[:4]
+		}
+		s.dlManager.SetMeta(item.ID, map[string]string{
+			"title":       track.Title,
+			"artist":      track.Artist,
+			"album":       album.Title,
+			"albumArtist": album.Artist,
+			"trackNumber": fmt.Sprintf("%d", idx),
+			"totalTracks": fmt.Sprintf("%d", len(album.Tracks)),
+			"genre":       album.Genre,
+			"year":        year,
+			"cover":       dab.CoverURL(album.Cover),
+		})
 		items = append(items, item)
 	}
 

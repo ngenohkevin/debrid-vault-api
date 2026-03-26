@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,6 +66,40 @@ func main() {
 
 	srv := server.New(cfg, providers, dlManager, scheduler, library, dabClient)
 	scheduler.SetMusicHandler(srv.HandleMusicSchedule)
+
+	// Tag music files with metadata after download
+	dlManager.SetPostMoveHook(func(id, finalPath string) {
+		meta := dlManager.GetMeta(id)
+		if meta == nil {
+			return
+		}
+		defer dlManager.ClearMeta(id)
+
+		if !strings.HasSuffix(strings.ToLower(finalPath), ".flac") {
+			return
+		}
+
+		trackNum := 0
+		totalTracks := 0
+		fmt.Sscanf(meta["trackNumber"], "%d", &trackNum)
+		fmt.Sscanf(meta["totalTracks"], "%d", &totalTracks)
+
+		if err := dab.TagFLAC(finalPath, dab.TrackMeta{
+			Title:       meta["title"],
+			Artist:      meta["artist"],
+			Album:       meta["album"],
+			AlbumArtist: meta["albumArtist"],
+			TrackNumber: trackNum,
+			TotalTracks: totalTracks,
+			Genre:       meta["genre"],
+			Year:        meta["year"],
+			CoverURL:    meta["cover"],
+		}); err != nil {
+			log.Printf("Failed to tag %s: %v", finalPath, err)
+		} else {
+			log.Printf("Tagged: %s", finalPath)
+		}
+	})
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
