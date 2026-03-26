@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/dab"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 )
@@ -190,7 +191,7 @@ func (s *Server) musicDownloadTrack(c *gin.Context) {
 		folder = sanitizeFilename(req.Artist) + "/" + sanitizeFilename(album)
 	}
 
-	item, err := s.dlManager.AddMusicDownload(streamURL, filename, folder)
+	item, err := s.dlManager.AddMusicDownload(streamURL, filename, folder, "", "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -230,6 +231,9 @@ func (s *Server) musicDownloadAlbum(c *gin.Context) {
 		ext = ".mp3"
 	}
 
+	groupID := uuid.New().String()[:8]
+	groupName := album.Artist + " - " + album.Title
+
 	// Resolve all stream URLs and queue downloads
 	var items []*downloader.DownloadItem
 	for _, track := range album.Tracks {
@@ -241,7 +245,7 @@ func (s *Server) musicDownloadAlbum(c *gin.Context) {
 		idx := trackIndex(album, track.ID)
 		filename := sanitizeFilename(fmt.Sprintf("%02d. %s%s", idx, track.Title, ext))
 
-		item, err := s.dlManager.AddMusicDownload(streamURL, filename, folder)
+		item, err := s.dlManager.AddMusicDownload(streamURL, filename, folder, groupID, groupName)
 		if err != nil {
 			continue
 		}

@@ -497,7 +497,7 @@ func (m *Manager) AddDirectURL(downloadURL, name string, category Category, prov
 
 // AddMusicDownload queues a music file download from a direct URL.
 // The file is downloaded to staging and then moved to MusicDir/folder/name.
-func (m *Manager) AddMusicDownload(downloadURL, name, folder string) (*DownloadItem, error) {
+func (m *Manager) AddMusicDownload(downloadURL, name, folder, groupID, groupName string) (*DownloadItem, error) {
 	item := &DownloadItem{
 		ID:          uuid.New().String()[:8],
 		Name:        name,
@@ -506,6 +506,8 @@ func (m *Manager) AddMusicDownload(downloadURL, name, folder string) (*DownloadI
 		Source:      downloadURL,
 		Provider:    "dab",
 		Folder:      folder,
+		GroupID:     groupID,
+		GroupName:   groupName,
 		DownloadURL: downloadURL,
 		CreatedAt:   time.Now(),
 	}
