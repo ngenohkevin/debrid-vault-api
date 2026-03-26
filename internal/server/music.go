@@ -49,12 +49,19 @@ func (s *Server) musicSearch(c *gin.Context) {
 		return
 	}
 	searchType := c.DefaultQuery("type", "track")
-	result, err := s.dab.Search(query, searchType, 20)
+
+	// DAB API often returns tracks even when searching for albums/artists.
+	// Always search as "track" and extract albums/artists from results.
+	apiType := searchType
+	if searchType == "album" || searchType == "artist" {
+		apiType = "track"
+	}
+
+	result, err := s.dab.Search(query, apiType, 50)
 	if err != nil {
-		// Try re-login on auth errors
 		if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "requiresAuth") {
 			if s.dabRelogin() {
-				result, err = s.dab.Search(query, searchType, 20)
+				result, err = s.dab.Search(query, apiType, 50)
 			}
 		}
 		if err != nil {
@@ -62,6 +69,42 @@ func (s *Server) musicSearch(c *gin.Context) {
 			return
 		}
 	}
+
+	// Extract unique albums from track results
+	if searchType == "album" && len(result.Albums) == 0 && len(result.Tracks) > 0 {
+		seen := make(map[string]bool)
+		for _, t := range result.Tracks {
+			if t.AlbumID == "" || seen[t.AlbumID] {
+				continue
+			}
+			seen[t.AlbumID] = true
+			result.Albums = append(result.Albums, dab.Album{
+				ID:     t.AlbumID,
+				Title:  t.AlbumTitle,
+				Artist: t.Artist,
+				Cover:  dab.CoverURL(t.AlbumCover),
+			})
+		}
+		result.Tracks = nil
+	}
+
+	// Extract unique artists from track results
+	if searchType == "artist" && len(result.Artists) == 0 && len(result.Tracks) > 0 {
+		seen := make(map[string]bool)
+		for _, t := range result.Tracks {
+			artistID := t.ArtistID.String()
+			if artistID == "" || seen[artistID] {
+				continue
+			}
+			seen[artistID] = true
+			result.Artists = append(result.Artists, dab.Artist{
+				ID:   t.ArtistID,
+				Name: t.Artist,
+			})
+		}
+		result.Tracks = nil
+	}
+
 	c.JSON(http.StatusOK, result)
 }
 
