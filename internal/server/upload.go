@@ -23,9 +23,22 @@ type uploadResult struct {
 	Files  []string `json:"files"`
 }
 
+const maxUploadSize = 2 << 30 // 2 GB
+
 func (s *Server) musicUpload(c *gin.Context) {
+	// Reject uploads over 2GB early
+	if c.Request.ContentLength > maxUploadSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large (max 2 GB)"})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadSize)
+
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
+		if err.Error() == "http: request body too large" {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large (max 2 GB)"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
 		return
 	}
