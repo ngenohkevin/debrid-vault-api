@@ -44,8 +44,10 @@ func (s *Server) musicUpload(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// Save to temp file
-	tmpFile, err := os.CreateTemp("", "music-upload-*"+filepath.Ext(header.Filename))
+	// Save to temp file on NVMe staging (not /tmp which is tmpfs/RAM)
+	tmpDir := filepath.Join(s.cfg.DownloadDir, ".uploads")
+	os.MkdirAll(tmpDir, 0755)
+	tmpFile, err := os.CreateTemp(tmpDir, "music-upload-*"+filepath.Ext(header.Filename))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create temp file"})
 		return
@@ -85,8 +87,8 @@ func (s *Server) musicUpload(c *gin.Context) {
 }
 
 func handleZipUpload(zipPath, musicDir string) (*uploadResult, error) {
-	// Extract to temp dir
-	tmpDir, err := os.MkdirTemp("", "music-extract-*")
+	// Extract to temp dir (same parent as the zip to stay on NVMe)
+	tmpDir, err := os.MkdirTemp(filepath.Dir(zipPath), "music-extract-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %v", err)
 	}
