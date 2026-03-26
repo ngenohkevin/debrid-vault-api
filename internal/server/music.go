@@ -79,10 +79,11 @@ func (s *Server) musicSearch(c *gin.Context) {
 			}
 			seen[t.AlbumID] = true
 			result.Albums = append(result.Albums, dab.Album{
-				ID:     t.AlbumID,
-				Title:  t.AlbumTitle,
-				Artist: t.Artist,
-				Cover:  dab.CoverURL(t.AlbumCover),
+				ID:          t.AlbumID,
+				Title:       t.AlbumTitle,
+				Artist:      t.Artist,
+				Cover:       dab.CoverURL(t.AlbumCover),
+				ReleaseDate: t.ReleaseDate,
 			})
 		}
 		result.Tracks = nil
