@@ -70,7 +70,14 @@ func (s *Server) musicSearch(c *gin.Context) {
 			}
 		}
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "503") || strings.Contains(errMsg, "Service Unavailable") {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "DAB Music is temporarily unavailable. Try again in a few minutes."})
+			} else if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "rate") {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Rate limited by DAB Music. Wait a minute and try again."})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+			}
 			return
 		}
 	}
