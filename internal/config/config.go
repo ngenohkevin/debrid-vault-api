@@ -27,8 +27,14 @@ type Config struct {
 
 // persistedSettings is the subset of config saved to disk.
 type persistedSettings struct {
-	SpeedLimitMbps float64 `json:"speedLimitMbps"`
+	SpeedLimitMbps         float64  `json:"speedLimitMbps"`
+	MaxConcurrentDownloads *int     `json:"maxConcurrentDownloads,omitempty"`
+	MaxSegmentsPerFile     *int     `json:"maxSegmentsPerFile,omitempty"`
+	PausedProviders        []string `json:"pausedProviders,omitempty"`
 }
+
+// PausedProviders tracks which debrid providers are paused (skipped for new downloads).
+var PausedProviders = make(map[string]bool)
 
 func Load() *Config {
 	cfg := &Config{
@@ -66,13 +72,33 @@ func (c *Config) loadPersistedSettings() {
 		if s.SpeedLimitMbps > 0 {
 			c.SpeedLimitMbps = s.SpeedLimitMbps
 		}
+		if s.MaxConcurrentDownloads != nil && *s.MaxConcurrentDownloads > 0 {
+			c.MaxConcurrentDownloads = *s.MaxConcurrentDownloads
+		}
+		if s.MaxSegmentsPerFile != nil && *s.MaxSegmentsPerFile > 0 {
+			c.MaxSegmentsPerFile = *s.MaxSegmentsPerFile
+		}
+		for _, name := range s.PausedProviders {
+			PausedProviders[name] = true
+		}
 	}
 }
 
 // SaveSettings persists user-configurable settings to disk.
 func (c *Config) SaveSettings() {
+	concurrent := c.MaxConcurrentDownloads
+	segments := c.MaxSegmentsPerFile
+	var paused []string
+	for name := range PausedProviders {
+		if PausedProviders[name] {
+			paused = append(paused, name)
+		}
+	}
 	s := persistedSettings{
-		SpeedLimitMbps: c.SpeedLimitMbps,
+		SpeedLimitMbps:         c.SpeedLimitMbps,
+		MaxConcurrentDownloads: &concurrent,
+		MaxSegmentsPerFile:     &segments,
+		PausedProviders:        paused,
 	}
 	data, err := json.Marshal(s)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ngenohkevin/debrid-vault-api/internal/config"
 	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
@@ -53,6 +54,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 		// Providers
 		api.GET("/providers", s.listProviders)
+		api.POST("/providers/:name/pause", s.pauseProvider)
+		api.POST("/providers/:name/resume", s.resumeProvider)
 
 		// Real-Debrid / Cloud
 		api.GET("/rd/user", s.getRDUser)
@@ -92,12 +95,39 @@ func (s *Server) listProviders(c *gin.Context) {
 	type providerInfo struct {
 		Name        string `json:"name"`
 		DisplayName string `json:"displayName"`
+		Paused      bool   `json:"paused"`
 	}
 	providers := make([]providerInfo, 0, len(s.providers))
 	for name, p := range s.providers {
-		providers = append(providers, providerInfo{Name: name, DisplayName: p.Name()})
+		providers = append(providers, providerInfo{
+			Name:        name,
+			DisplayName: p.Name(),
+			Paused:      config.PausedProviders[name],
+		})
 	}
 	c.JSON(http.StatusOK, providers)
+}
+
+func (s *Server) pauseProvider(c *gin.Context) {
+	name := c.Param("name")
+	if _, ok := s.providers[name]; !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
+	config.PausedProviders[name] = true
+	s.cfg.SaveSettings()
+	c.JSON(http.StatusOK, gin.H{"status": "paused", "provider": name})
+}
+
+func (s *Server) resumeProvider(c *gin.Context) {
+	name := c.Param("name")
+	if _, ok := s.providers[name]; !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
+	delete(config.PausedProviders, name)
+	s.cfg.SaveSettings()
+	c.JSON(http.StatusOK, gin.H{"status": "resumed", "provider": name})
 }
 
 func (s *Server) getStatus(c *gin.Context) {
@@ -496,15 +526,29 @@ func (s *Server) getSettings(c *gin.Context) {
 
 func (s *Server) updateSettings(c *gin.Context) {
 	var req struct {
-		SpeedLimitMbps *float64 `json:"speedLimitMbps"`
+		SpeedLimitMbps         *float64 `json:"speedLimitMbps"`
+		MaxConcurrentDownloads *int     `json:"maxConcurrentDownloads"`
+		MaxSegmentsPerFile     *int     `json:"maxSegmentsPerFile"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	changed := false
 	if req.SpeedLimitMbps != nil {
 		s.cfg.SpeedLimitMbps = *req.SpeedLimitMbps
 		s.dlManager.Engine().SetSpeedLimit(*req.SpeedLimitMbps)
+		changed = true
+	}
+	if req.MaxConcurrentDownloads != nil && *req.MaxConcurrentDownloads > 0 {
+		s.dlManager.SetMaxConcurrent(*req.MaxConcurrentDownloads)
+		changed = true
+	}
+	if req.MaxSegmentsPerFile != nil && *req.MaxSegmentsPerFile > 0 {
+		s.dlManager.SetMaxSegments(*req.MaxSegmentsPerFile)
+		changed = true
+	}
+	if changed {
 		s.cfg.SaveSettings()
 	}
 	c.JSON(http.StatusOK, gin.H{

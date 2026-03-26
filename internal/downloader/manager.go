@@ -108,6 +108,27 @@ func (m *Manager) Engine() *DownloadEngine {
 	return m.engine
 }
 
+// SetMaxConcurrent updates the concurrency semaphore for new downloads.
+// In-flight downloads continue with the old limit; new downloads use the new one.
+func (m *Manager) SetMaxConcurrent(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.mu.Lock()
+	m.sem = make(chan struct{}, n)
+	m.cfg.MaxConcurrentDownloads = n
+	m.mu.Unlock()
+}
+
+// SetMaxSegments updates the max segments per file for future downloads.
+func (m *Manager) SetMaxSegments(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.engine.maxSegments = n
+	m.cfg.MaxSegmentsPerFile = n
+}
+
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	for id, cancel := range m.cancels {
