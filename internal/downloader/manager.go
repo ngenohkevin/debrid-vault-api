@@ -455,7 +455,7 @@ func (m *Manager) RemoveDownload(id string) error {
 	item, exists := m.downloads[id]
 	if !exists {
 		m.mu.Unlock()
-		return fmt.Errorf("download not found: %s", id)
+		return nil // already removed — idempotent
 	}
 	name := item.Name
 	delete(m.downloads, id)
