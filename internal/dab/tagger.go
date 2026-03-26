@@ -23,6 +23,16 @@ type TrackMeta struct {
 	Genre       string
 	Year        string
 	CoverURL    string
+	// MusicBrainz enrichment
+	ISRC            string
+	Label           string
+	CatalogNumber   string
+	Barcode         string
+	TrackMBID       string
+	ArtistMBID      string
+	AlbumMBID       string
+	AlbumArtistMBID string
+	ReleaseGroupID  string
 }
 
 // TagFLAC embeds metadata and cover art into a FLAC file using ffmpeg.
@@ -93,6 +103,35 @@ func TagFLAC(filePath string, meta TrackMeta) error {
 	}
 	if meta.Year != "" {
 		args = append(args, "-metadata", "DATE="+meta.Year)
+	}
+
+	// MusicBrainz fields
+	if meta.ISRC != "" {
+		args = append(args, "-metadata", "ISRC="+meta.ISRC)
+	}
+	if meta.Label != "" {
+		args = append(args, "-metadata", "LABEL="+meta.Label)
+	}
+	if meta.CatalogNumber != "" {
+		args = append(args, "-metadata", "CATALOGNUMBER="+meta.CatalogNumber)
+	}
+	if meta.Barcode != "" {
+		args = append(args, "-metadata", "BARCODE="+meta.Barcode)
+	}
+	if meta.TrackMBID != "" {
+		args = append(args, "-metadata", "MUSICBRAINZ_TRACKID="+meta.TrackMBID)
+	}
+	if meta.ArtistMBID != "" {
+		args = append(args, "-metadata", "MUSICBRAINZ_ARTISTID="+meta.ArtistMBID)
+	}
+	if meta.AlbumMBID != "" {
+		args = append(args, "-metadata", "MUSICBRAINZ_ALBUMID="+meta.AlbumMBID)
+	}
+	if meta.AlbumArtistMBID != "" {
+		args = append(args, "-metadata", "MUSICBRAINZ_ALBUMARTISTID="+meta.AlbumArtistMBID)
+	}
+	if meta.ReleaseGroupID != "" {
+		args = append(args, "-metadata", "MUSICBRAINZ_RELEASEGROUPID="+meta.ReleaseGroupID)
 	}
 
 	args = append(args, tmpOut)

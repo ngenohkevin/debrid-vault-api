@@ -67,6 +67,9 @@ func main() {
 	srv := server.New(cfg, providers, dlManager, scheduler, library, dabClient)
 	scheduler.SetMusicHandler(srv.HandleMusicSchedule)
 
+	// MusicBrainz client for metadata enrichment
+	mbClient := dab.NewMBClient()
+
 	// Tag music files with metadata after download
 	dlManager.SetPostMoveHook(func(id, finalPath string) {
 		meta := dlManager.GetMeta(id)
@@ -84,7 +87,7 @@ func main() {
 		fmt.Sscanf(meta["trackNumber"], "%d", &trackNum)
 		fmt.Sscanf(meta["totalTracks"], "%d", &totalTracks)
 
-		if err := dab.TagFLAC(finalPath, dab.TrackMeta{
+		tagMeta := dab.TrackMeta{
 			Title:       meta["title"],
 			Artist:      meta["artist"],
 			Album:       meta["album"],
@@ -94,7 +97,27 @@ func main() {
 			Genre:       meta["genre"],
 			Year:        meta["year"],
 			CoverURL:    meta["cover"],
-		}); err != nil {
+		}
+
+		// Enrich with MusicBrainz data
+		mb := mbClient.EnrichTrack(meta["title"], meta["artist"], meta["album"], meta["isrc"])
+		if mb != nil {
+			tagMeta.ISRC = mb.ISRC
+			tagMeta.Label = mb.Label
+			tagMeta.CatalogNumber = mb.CatalogNumber
+			tagMeta.Barcode = mb.Barcode
+			tagMeta.TrackMBID = mb.TrackMBID
+			tagMeta.ArtistMBID = mb.ArtistMBID
+			tagMeta.AlbumMBID = mb.AlbumMBID
+			tagMeta.AlbumArtistMBID = mb.AlbumArtistMBID
+			tagMeta.ReleaseGroupID = mb.ReleaseGroupID
+			if tagMeta.Genre == "" && len(mb.Genres) > 0 {
+				tagMeta.Genre = strings.Join(mb.Genres, "; ")
+			}
+			log.Printf("MusicBrainz enriched: %s (MBID: %s)", meta["title"], mb.TrackMBID)
+		}
+
+		if err := dab.TagFLAC(finalPath, tagMeta); err != nil {
 			log.Printf("Failed to tag %s: %v", finalPath, err)
 		} else {
 			log.Printf("Tagged: %s", finalPath)
