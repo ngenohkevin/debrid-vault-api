@@ -55,6 +55,7 @@ func (s *Server) providerNames() []string {
 func (s *Server) Router() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.MaxMultipartMemory = 64 << 20 // 64MB in memory, rest spills to disk
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
 

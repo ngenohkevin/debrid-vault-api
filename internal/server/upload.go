@@ -23,26 +23,27 @@ type uploadResult struct {
 	Files  []string `json:"files"`
 }
 
-const maxUploadSize = 2 << 30 // 2 GB
+const maxUploadSize int64 = 2 << 30 // 2 GB
 
 func (s *Server) musicUpload(c *gin.Context) {
-	// Reject uploads over 2GB early
+	// Reject obviously oversized uploads early via Content-Length header
 	if c.Request.ContentLength > maxUploadSize {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large (max 2 GB)"})
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadSize)
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		if err.Error() == "http: request body too large" {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large (max 2 GB)"})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("file is required: %v", err)})
 		return
 	}
 	defer file.Close()
+
+	// Check actual file size
+	if header.Size > maxUploadSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large (max 2 GB)"})
+		return
+	}
 
 	// Save to temp file on NVMe staging (not /tmp which is tmpfs/RAM)
 	tmpDir := filepath.Join(s.cfg.DownloadDir, ".uploads")
