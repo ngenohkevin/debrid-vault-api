@@ -738,6 +738,11 @@ func (m *Manager) downloadFileWithEngine(ctx context.Context, item *DownloadItem
 	}
 
 	numSegments := m.dynamicSegments()
+	// Music files use single segment — DAB/Qobuz stream URLs expire quickly
+	// and the multi-segment engine can't refresh them.
+	if item.Provider == "dab" {
+		numSegments = 1
+	}
 
 	statusCb := m.statusCallback(item)
 	err := m.engine.Download(ctx, item.DownloadURL, destPath, numSegments, func(downloaded, total, speed int64) {
