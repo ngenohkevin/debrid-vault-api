@@ -737,6 +737,9 @@ func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	item.SubtitleStatus = DetectSubtitleStatus(unrestricted.Filename)
 	m.mu.Unlock()
 
+	// Emit resolved name so the frontend updates before download progress starts
+	m.emit(Event{Type: "resolved", Data: *item})
+
 	m.downloadFileWithEngine(ctx, item)
 }
 
