@@ -51,17 +51,19 @@ func (s *Server) musicSearch(c *gin.Context) {
 	searchType := c.DefaultQuery("type", "track")
 
 	// DAB API often returns tracks even when searching for albums/artists.
-	// Always search as "track" and extract albums/artists from results.
+	// Search as "track" and extract albums/artists from results.
 	apiType := searchType
+	limit := 20
 	if searchType == "album" || searchType == "artist" {
 		apiType = "track"
+		limit = 50
 	}
 
-	result, err := s.dab.Search(query, apiType, 50)
+	result, err := s.dab.Search(query, apiType, limit)
 	if err != nil {
 		if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "requiresAuth") {
 			if s.dabRelogin() {
-				result, err = s.dab.Search(query, apiType, 50)
+				result, err = s.dab.Search(query, apiType, limit)
 			}
 		}
 		if err != nil {
