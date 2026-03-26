@@ -45,10 +45,18 @@ func main() {
 
 	// DAB Music client
 	dabClient := dab.NewClient()
-	if session := os.Getenv("DAB_SESSION"); session != "" {
-		dabClient.SetSession(session)
+	if cfg.DABSession != "" {
+		dabClient.SetSession(cfg.DABSession)
+		log.Println("DAB Music: using session token")
+	} else if cfg.DABEmail != "" && cfg.DABPassword != "" {
+		if err := dabClient.Login(cfg.DABEmail, cfg.DABPassword); err != nil {
+			log.Printf("DAB Music login failed: %v", err)
+		} else {
+			log.Println("DAB Music: logged in successfully")
+		}
+	} else {
+		log.Println("DAB Music: no credentials configured (set DAB_EMAIL/DAB_PASSWORD)")
 	}
-	log.Println("DAB Music integration enabled")
 
 	// Start stale file cleanup
 	cleanupStop := make(chan struct{})

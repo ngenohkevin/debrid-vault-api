@@ -10,6 +10,38 @@ import (
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 )
 
+func (s *Server) musicLogin(c *gin.Context) {
+	var req struct {
+		Email    string `json:"email" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.dab.Login(req.Email, req.Password); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "logged in"})
+}
+
+func (s *Server) musicStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"authenticated": s.dab.Session() != "",
+	})
+}
+
+// dabRelogin attempts to re-authenticate using stored credentials.
+func (s *Server) dabRelogin() bool {
+	if s.cfg.DABEmail != "" && s.cfg.DABPassword != "" {
+		if err := s.dab.Login(s.cfg.DABEmail, s.cfg.DABPassword); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) musicSearch(c *gin.Context) {
 	query := c.Query("q")
 	if query == "" {
@@ -19,8 +51,16 @@ func (s *Server) musicSearch(c *gin.Context) {
 	searchType := c.DefaultQuery("type", "track")
 	result, err := s.dab.Search(query, searchType, 20)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		// Try re-login on auth errors
+		if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "requiresAuth") {
+			if s.dabRelogin() {
+				result, err = s.dab.Search(query, searchType, 20)
+			}
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, result)
 }

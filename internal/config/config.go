@@ -15,6 +15,9 @@ type Config struct {
 	MoviesDir              string
 	TVShowsDir             string
 	MusicDir               string
+	DABEmail               string
+	DABPassword            string
+	DABSession             string
 	AllowedOrigins         string
 	APIKey                 string
 	MaxConcurrentDownloads int
@@ -36,6 +39,9 @@ func Load() *Config {
 		MoviesDir:              getEnv("MOVIES_DIR", "/mnt/perigrine/media/movies"),
 		TVShowsDir:             getEnv("TVSHOWS_DIR", "/mnt/perigrine/media/tv-shows"),
 		MusicDir:               getEnv("MUSIC_DIR", "/mnt/perigrine/media/music"),
+		DABEmail:               getEnv("DAB_EMAIL", ""),
+		DABPassword:            getEnv("DAB_PASSWORD", ""),
+		DABSession:             getEnv("DAB_SESSION", ""),
 		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", "*"),
 		APIKey:                 getEnv("API_KEY", ""),
 		MaxConcurrentDownloads: getEnvInt("MAX_CONCURRENT_DOWNLOADS", 4),
