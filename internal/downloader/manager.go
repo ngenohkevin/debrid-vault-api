@@ -711,15 +711,8 @@ func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 }
 
 func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
-	m.updateStatus(item, StatusQueued, "")
-	select {
-	case m.sem <- struct{}{}:
-	case <-ctx.Done():
-		return
-	}
-	defer func() { <-m.sem }()
-
-	// Unrestrict the link directly (no ListDownloads scan)
+	// Unrestrict the link first (outside semaphore) so the name resolves immediately
+	m.updateStatus(item, StatusResolving, "")
 	unrestricted, err := m.provider(item.Provider).UnrestrictLink(item.Source)
 	if err != nil {
 		m.setError(item, fmt.Sprintf("Failed to resolve link: %v", err))
@@ -730,15 +723,23 @@ func (m *Manager) processRDLink(ctx context.Context, item *DownloadItem) {
 	item.DownloadURL = unrestricted.Download
 	item.Name = unrestricted.Filename
 	item.Size = unrestricted.Filesize
-	// Auto-correct category based on actual filename (preserve user's music choice)
 	if item.Category != CategoryMusic {
 		item.Category = DetectCategory(unrestricted.Filename)
 	}
 	item.SubtitleStatus = DetectSubtitleStatus(unrestricted.Filename)
 	m.mu.Unlock()
 
-	// Emit resolved name so the frontend updates before download progress starts
+	// Emit resolved name so the frontend updates before download starts
 	m.emit(Event{Type: "resolved", Data: *item})
+
+	// Now wait for a download slot
+	m.updateStatus(item, StatusQueued, "")
+	select {
+	case m.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-m.sem }()
 
 	m.downloadFileWithEngine(ctx, item)
 }
