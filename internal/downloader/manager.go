@@ -495,6 +495,33 @@ func (m *Manager) AddDirectURL(downloadURL, name string, category Category, prov
 	return item, nil
 }
 
+// AddMusicDownload queues a music file download from a direct URL.
+// The file is downloaded to staging and then moved to MusicDir/folder/name.
+func (m *Manager) AddMusicDownload(downloadURL, name, folder string) (*DownloadItem, error) {
+	item := &DownloadItem{
+		ID:          uuid.New().String()[:8],
+		Name:        name,
+		Category:    CategoryMusic,
+		Status:      StatusPending,
+		Source:      downloadURL,
+		Provider:    "dab",
+		Folder:      folder,
+		DownloadURL: downloadURL,
+		CreatedAt:   time.Now(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.downloads[item.ID] = item
+	m.cancels[item.ID] = cancel
+	m.mu.Unlock()
+
+	m.emit(Event{Type: "added", Data: *item})
+
+	go m.downloadFile(ctx, item)
+	return item, nil
+}
+
 func (m *Manager) processMagnet(ctx context.Context, item *DownloadItem) {
 	m.updateStatus(item, StatusQueued, "")
 	select {

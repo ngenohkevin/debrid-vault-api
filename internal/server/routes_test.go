@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/dab"
 	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
@@ -34,7 +35,7 @@ func setupTestServer() *Server {
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
-	return New(cfg, providers, dlManager, scheduler, library)
+	return New(cfg, providers, dlManager, scheduler, library, dab.NewClient())
 }
 
 func TestHealthCheck(t *testing.T) {
@@ -167,7 +168,7 @@ func TestAPIKeyMiddleware(t *testing.T) {
 	dlManager := downloader.NewManager(cfg, providers)
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
-	srv := New(cfg, providers, dlManager, scheduler, library)
+	srv := New(cfg, providers, dlManager, scheduler, library, dab.NewClient())
 	router := srv.Router()
 
 	t.Run("health check bypasses auth", func(t *testing.T) {

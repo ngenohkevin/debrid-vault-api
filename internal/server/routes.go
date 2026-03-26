@@ -62,6 +62,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.POST("/rd/cache/invalidate", s.invalidateRDCache)
 		api.POST("/rd/unrestrict", s.unrestrictLink)
 
+		// Music (DAB)
+		api.GET("/music/search", s.musicSearch)
+		api.GET("/music/album", s.musicAlbum)
+		api.GET("/music/artist", s.musicArtist)
+		api.POST("/music/download/track", s.musicDownloadTrack)
+		api.POST("/music/download/album", s.musicDownloadAlbum)
+		api.GET("/music/lyrics", s.musicLyrics)
+
 		// Library
 		api.GET("/library", s.listLibrary)
 		api.GET("/library/search", s.searchLibrary)

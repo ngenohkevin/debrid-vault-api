@@ -11,6 +11,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/ngenohkevin/debrid-vault-api/internal/config"
+	"github.com/ngenohkevin/debrid-vault-api/internal/dab"
 	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
@@ -42,11 +43,18 @@ func main() {
 	scheduler := downloader.NewScheduler(dlManager)
 	library := media.NewLibrary(cfg)
 
+	// DAB Music client
+	dabClient := dab.NewClient()
+	if session := os.Getenv("DAB_SESSION"); session != "" {
+		dabClient.SetSession(session)
+	}
+	log.Println("DAB Music integration enabled")
+
 	// Start stale file cleanup
 	cleanupStop := make(chan struct{})
 	dlManager.StartCleanup(cleanupStop)
 
-	srv := server.New(cfg, providers, dlManager, scheduler, library)
+	srv := server.New(cfg, providers, dlManager, scheduler, library, dabClient)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
