@@ -84,6 +84,7 @@ func (s *Server) musicSearch(c *gin.Context) {
 				Artist:      t.Artist,
 				Cover:       dab.CoverURL(t.AlbumCover),
 				ReleaseDate: t.ReleaseDate,
+				Genre:       t.Genre,
 			})
 		}
 		result.Tracks = nil
