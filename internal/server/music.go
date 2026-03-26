@@ -99,9 +99,13 @@ func (s *Server) musicArtist(c *gin.Context) {
 
 func (s *Server) musicDownloadTrack(c *gin.Context) {
 	var req struct {
-		TrackID string `json:"trackId" binding:"required"`
-		Quality string `json:"quality"`
-		Folder  string `json:"folder"`
+		TrackID     string `json:"trackId" binding:"required"`
+		Title       string `json:"title" binding:"required"`
+		Artist      string `json:"artist" binding:"required"`
+		Album       string `json:"album"`
+		TrackNumber int    `json:"trackNumber"`
+		Quality     string `json:"quality"`
+		Folder      string `json:"folder"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -111,13 +115,6 @@ func (s *Server) musicDownloadTrack(c *gin.Context) {
 	quality := req.Quality
 	if quality == "" {
 		quality = dab.QualityFLAC
-	}
-
-	// Get track metadata
-	track, err := s.dab.GetTrack(req.TrackID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get track info: %v", err)})
-		return
 	}
 
 	// Get stream URL
@@ -132,10 +129,18 @@ func (s *Server) musicDownloadTrack(c *gin.Context) {
 	if quality == dab.QualityMP3 {
 		ext = ".mp3"
 	}
-	filename := sanitizeFilename(fmt.Sprintf("%02d. %s - %s%s", track.TrackNumber, track.Artist, track.Title, ext))
+	trackNum := req.TrackNumber
+	if trackNum == 0 {
+		trackNum = 1
+	}
+	filename := sanitizeFilename(fmt.Sprintf("%02d. %s - %s%s", trackNum, req.Artist, req.Title, ext))
 	folder := req.Folder
-	if folder == "" {
-		folder = sanitizeFilename(track.Artist) + "/" + sanitizeFilename(track.Album)
+	if folder == "" && req.Artist != "" {
+		album := req.Album
+		if album == "" {
+			album = "Singles"
+		}
+		folder = sanitizeFilename(req.Artist) + "/" + sanitizeFilename(album)
 	}
 
 	item, err := s.dlManager.AddMusicDownload(streamURL, filename, folder)
