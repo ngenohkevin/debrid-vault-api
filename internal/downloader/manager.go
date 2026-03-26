@@ -274,6 +274,10 @@ func (m *Manager) PauseDownload(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("download not found: %s", id)
 	}
+	if item.Status == StatusPaused {
+		m.mu.Unlock()
+		return nil // already paused — idempotent
+	}
 	if item.Status != StatusDownloading && item.Status != StatusQueued && item.Status != StatusResolving {
 		m.mu.Unlock()
 		return fmt.Errorf("download not in pausable state: %s", item.Status)
