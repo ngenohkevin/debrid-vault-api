@@ -230,6 +230,10 @@ func (m *Manager) CheckResumable(id string) error {
 		return fmt.Errorf("no download URL or source to resume from")
 	}
 
+	// Allow pausing resolving items — they'll be cancelled and can be retried later
+	if status == StatusResolving || status == StatusQueued {
+		return nil
+	}
 	if name == "" || name == "Resolving magnet..." || name == "Resolving link..." {
 		return fmt.Errorf("download hasn't resolved yet, wait for it to start")
 	}
@@ -270,7 +274,7 @@ func (m *Manager) PauseDownload(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("download not found: %s", id)
 	}
-	if item.Status != StatusDownloading && item.Status != StatusQueued {
+	if item.Status != StatusDownloading && item.Status != StatusQueued && item.Status != StatusResolving {
 		m.mu.Unlock()
 		return fmt.Errorf("download not in pausable state: %s", item.Status)
 	}
