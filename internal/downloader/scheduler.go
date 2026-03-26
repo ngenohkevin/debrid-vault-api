@@ -43,6 +43,10 @@ type ScheduledDownload struct {
 	CompletedAt    *time.Time     `json:"completedAt,omitempty"`
 }
 
+// MusicScheduleFunc handles scheduled music downloads (dab:// sources).
+// Returns the first download item and any error.
+type MusicScheduleFunc func(source string) (*DownloadItem, error)
+
 type Scheduler struct {
 	manager      *Manager
 	schedules    map[string]*ScheduledDownload
@@ -51,6 +55,12 @@ type Scheduler struct {
 	stopCh       chan struct{}
 	prevLimit    float64
 	prevLimitMu  sync.Mutex
+	musicHandler MusicScheduleFunc
+}
+
+// SetMusicHandler sets the callback for handling dab:// scheduled downloads.
+func (s *Scheduler) SetMusicHandler(fn MusicScheduleFunc) {
+	s.musicHandler = fn
 }
 
 func NewScheduler(manager *Manager) *Scheduler {
@@ -370,6 +380,12 @@ func (s *Scheduler) executeSchedule(sched *ScheduledDownload) {
 		}
 	} else {
 		switch {
+		case strings.HasPrefix(source, "dab://"):
+			if s.musicHandler != nil {
+				item, err = s.musicHandler(source)
+			} else {
+				err = fmt.Errorf("music handler not configured")
+			}
 		case strings.HasPrefix(source, "magnet:"):
 			item, err = s.manager.AddMagnet(source, sched.Category, provider)
 		case strings.Contains(source, "real-debrid.com/d/"):

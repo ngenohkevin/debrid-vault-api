@@ -63,6 +63,7 @@ func main() {
 	dlManager.StartCleanup(cleanupStop)
 
 	srv := server.New(cfg, providers, dlManager, scheduler, library, dabClient)
+	scheduler.SetMusicHandler(srv.HandleMusicSchedule)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,

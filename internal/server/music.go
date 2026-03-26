@@ -3,7 +3,9 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -264,6 +266,162 @@ func (s *Server) musicDownloadAlbum(c *gin.Context) {
 		"totalTracks": len(album.Tracks),
 		"downloads":   items,
 	})
+}
+
+func (s *Server) musicScheduleTrack(c *gin.Context) {
+	var req struct {
+		TrackID        string  `json:"trackId" binding:"required"`
+		Title          string  `json:"title" binding:"required"`
+		Artist         string  `json:"artist" binding:"required"`
+		Album          string  `json:"album"`
+		TrackNumber    int     `json:"trackNumber"`
+		ScheduledAt    string  `json:"scheduledAt" binding:"required"`
+		SpeedLimitMbps float64 `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	scheduledAt, err := time.Parse(time.RFC3339, req.ScheduledAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be RFC3339 format"})
+		return
+	}
+	if scheduledAt.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be in the future"})
+		return
+	}
+
+	// Encode track info in the source URL
+	source := fmt.Sprintf("dab://track/%s?title=%s&artist=%s&album=%s&trackNumber=%d",
+		req.TrackID,
+		url.QueryEscape(req.Title),
+		url.QueryEscape(req.Artist),
+		url.QueryEscape(req.Album),
+		req.TrackNumber,
+	)
+	name := fmt.Sprintf("%s - %s", req.Artist, req.Title)
+
+	sched := s.scheduler.AddSchedule(name, source, downloader.CategoryMusic, "", "dab", scheduledAt, req.SpeedLimitMbps)
+	c.JSON(http.StatusOK, sched)
+}
+
+func (s *Server) musicScheduleAlbum(c *gin.Context) {
+	var req struct {
+		AlbumID        string  `json:"albumId" binding:"required"`
+		Title          string  `json:"title"`
+		Artist         string  `json:"artist"`
+		ScheduledAt    string  `json:"scheduledAt" binding:"required"`
+		SpeedLimitMbps float64 `json:"speedLimitMbps"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	scheduledAt, err := time.Parse(time.RFC3339, req.ScheduledAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be RFC3339 format"})
+		return
+	}
+	if scheduledAt.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduledAt must be in the future"})
+		return
+	}
+
+	source := fmt.Sprintf("dab://album/%s", req.AlbumID)
+	name := req.Title
+	if req.Artist != "" && req.Title != "" {
+		name = req.Artist + " - " + req.Title
+	}
+	if name == "" {
+		name = "Scheduled Album"
+	}
+
+	sched := s.scheduler.AddSchedule(name, source, downloader.CategoryMusic, "", "dab", scheduledAt, req.SpeedLimitMbps)
+	c.JSON(http.StatusOK, sched)
+}
+
+// HandleMusicSchedule processes dab:// sources from the scheduler.
+// It resolves fresh stream URLs at execution time (since they expire).
+func (s *Server) HandleMusicSchedule(source string) (*downloader.DownloadItem, error) {
+	parsed, err := url.Parse(source)
+	if err != nil {
+		return nil, fmt.Errorf("invalid dab source: %w", err)
+	}
+
+	switch parsed.Host {
+	case "track":
+		trackID := strings.TrimPrefix(parsed.Path, "/")
+		q := parsed.Query()
+		title := q.Get("title")
+		artist := q.Get("artist")
+		album := q.Get("album")
+		trackNumber := 1
+		if tn := q.Get("trackNumber"); tn != "" {
+			fmt.Sscanf(tn, "%d", &trackNumber)
+		}
+
+		streamURL, err := s.dab.GetStreamURL(trackID, dab.QualityFLAC)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get stream URL: %w", err)
+		}
+
+		ext := ".flac"
+		if trackNumber == 0 {
+			trackNumber = 1
+		}
+		filename := sanitizeFilename(fmt.Sprintf("%02d. %s - %s%s", trackNumber, artist, title, ext))
+		folder := ""
+		if artist != "" {
+			albumName := album
+			if albumName == "" {
+				albumName = "Singles"
+			}
+			folder = sanitizeFilename(artist) + "/" + sanitizeFilename(albumName)
+		}
+
+		return s.dlManager.AddMusicDownload(streamURL, filename, folder, "", "")
+
+	case "album":
+		albumID := strings.TrimPrefix(parsed.Path, "/")
+		albumInfo, err := s.dab.GetAlbum(albumID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get album: %w", err)
+		}
+		if len(albumInfo.Tracks) == 0 {
+			return nil, fmt.Errorf("album has no tracks")
+		}
+
+		folder := sanitizeFilename(albumInfo.Artist) + "/" + sanitizeFilename(albumInfo.Title)
+		groupID := uuid.New().String()[:8]
+		groupName := albumInfo.Artist + " - " + albumInfo.Title
+
+		var firstItem *downloader.DownloadItem
+		for _, track := range albumInfo.Tracks {
+			streamURL, err := s.dab.GetStreamURL(track.ID.String(), dab.QualityFLAC)
+			if err != nil {
+				continue
+			}
+			idx := trackIndex(albumInfo, track.ID)
+			filename := sanitizeFilename(fmt.Sprintf("%02d. %s%s", idx, track.Title, ".flac"))
+			item, err := s.dlManager.AddMusicDownload(streamURL, filename, folder, groupID, groupName)
+			if err != nil {
+				continue
+			}
+			if firstItem == nil {
+				firstItem = item
+			}
+		}
+		if firstItem == nil {
+			return nil, fmt.Errorf("failed to queue any tracks")
+		}
+		return firstItem, nil
+
+	default:
+		return nil, fmt.Errorf("unknown dab source type: %s", parsed.Host)
+	}
 }
 
 func (s *Server) musicLyrics(c *gin.Context) {

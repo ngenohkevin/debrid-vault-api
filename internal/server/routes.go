@@ -69,6 +69,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		api.POST("/music/download/track", s.musicDownloadTrack)
 		api.POST("/music/download/album", s.musicDownloadAlbum)
 		api.GET("/music/lyrics", s.musicLyrics)
+		api.POST("/music/schedule/track", s.musicScheduleTrack)
+		api.POST("/music/schedule/album", s.musicScheduleAlbum)
 		api.POST("/music/login", s.musicLogin)
 		api.GET("/music/status", s.musicStatus)
 
