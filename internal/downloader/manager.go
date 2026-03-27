@@ -790,6 +790,15 @@ func (m *Manager) downloadFile(ctx context.Context, item *DownloadItem) {
 		m.setError(item, "No download URL")
 		return
 	}
+	// Wait for a concurrency slot
+	m.updateStatus(item, StatusQueued, "")
+	select {
+	case m.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-m.sem }()
+
 	m.downloadFileWithEngine(ctx, item)
 }
 
@@ -1018,7 +1027,14 @@ func (m *Manager) moveToFinal(ctx context.Context, item *DownloadItem, destPath 
 
 	// Post-move hook (e.g. music metadata tagging)
 	if m.postMoveHook != nil {
-		go m.postMoveHook(item.ID, finalPath)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("postMoveHook panic for %s: %v", item.Name, r)
+				}
+			}()
+			m.postMoveHook(item.ID, finalPath)
+		}()
 	}
 
 	// Auto-resume next paused download in the same group

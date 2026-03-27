@@ -1,6 +1,7 @@
 package dab
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -218,7 +219,7 @@ func (c *MBClient) parseRecording(r *mbRecordingJSON) *MBRecording {
 
 func (c *MBClient) get(path string) ([]byte, error) {
 	// Rate limit: 1 request per second
-	c.limiter.Wait(nil)
+	c.limiter.Wait(context.Background())
 
 	req, err := http.NewRequest("GET", mbBaseURL+path, nil)
 	if err != nil {
