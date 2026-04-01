@@ -87,10 +87,9 @@ func (c *Client) Search(query, searchType string, limit int) (*dab.SearchResult,
 
 	result := &dab.SearchResult{}
 
-	// Parse the top-hits style response
+	// Try top-hits style response (album/artist search returns nested tracks/albums/artists)
 	var topHits tidalSearchResult
 	if err := json.Unmarshal(data, &topHits); err == nil {
-		// Track search returns {items:[...]} directly
 		if topHits.Tracks != nil {
 			var tracks []tidalTrack
 			json.Unmarshal(topHits.Tracks.Items, &tracks)
@@ -116,10 +115,13 @@ func (c *Client) Search(query, searchType string, limit int) (*dab.SearchResult,
 				})
 			}
 		}
-		return result, nil
+		// Only return if we actually got results from the nested format
+		if len(result.Tracks) > 0 || len(result.Albums) > 0 || len(result.Artists) > 0 {
+			return result, nil
+		}
 	}
 
-	// Track search returns {items:[...]} directly (not nested in tracks/albums/artists)
+	// Flat paged list: track search returns {items:[...]} directly
 	var pagedList struct {
 		Items json.RawMessage `json:"items"`
 	}
