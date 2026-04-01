@@ -16,12 +16,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          cache: true
 
       - name: Run tests
-        run: go test ./... -v
+        run: go test ./...
 
       - name: Build ARM64 binary
-        run: GOOS=linux GOARCH=arm64 go build -o bin/debrid-vault ./main.go
+        run: GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o bin/debrid-vault ./main.go
 
       - name: Set up Tailscale
         uses: tailscale/github-action@v3

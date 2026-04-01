@@ -154,14 +154,20 @@ func (m *Manager) UpdateItemStatus(id string, status Status) {
 }
 
 // UpdateItemProgress updates download progress and emits an SSE event.
+// For Tidal DASH downloads, downloaded/total are segment counts.
+// For direct downloads, they are byte counts.
 func (m *Manager) UpdateItemProgress(id string, downloaded, total int64) {
 	m.mu.Lock()
 	item, ok := m.downloads[id]
 	if ok {
-		item.Downloaded = downloaded
 		if total > 0 {
-			item.Size = total
 			item.Progress = float64(downloaded) / float64(total)
+		}
+		// Don't set Size/Downloaded for segment-based progress (small numbers indicate segments)
+		// Only set byte-based sizes for actual byte counts (>1KB)
+		if total > 1024 {
+			item.Downloaded = downloaded
+			item.Size = total
 		}
 	}
 	m.mu.Unlock()
