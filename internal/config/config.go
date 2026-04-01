@@ -20,6 +20,7 @@ type Config struct {
 	DABSession             string
 	AllowedOrigins         string
 	APIKey                 string
+	TidalAPIURL            string
 	MaxConcurrentDownloads int
 	MaxSegmentsPerFile     int
 	SpeedLimitMbps         float64
@@ -50,6 +51,7 @@ func Load() *Config {
 		DABSession:             getEnv("DAB_SESSION", ""),
 		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", "*"),
 		APIKey:                 getEnv("API_KEY", ""),
+		TidalAPIURL:            getEnv("TIDAL_API_URL", "http://localhost:8787"),
 		MaxConcurrentDownloads: getEnvInt("MAX_CONCURRENT_DOWNLOADS", 4),
 		MaxSegmentsPerFile:     getEnvInt("MAX_SEGMENTS_PER_FILE", 8),
 		SpeedLimitMbps:         getEnvFloat("SPEED_LIMIT_MBPS", 0),

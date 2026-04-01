@@ -23,6 +23,7 @@ type Track struct {
 	Genre        string        `json:"genre"`
 	Duration     int           `json:"duration"`
 	AudioQuality *AudioQuality `json:"audioQuality,omitempty"`
+	AudioModes   []string      `json:"audioModes,omitempty"`
 }
 
 type TrackDetail struct {
@@ -66,6 +67,8 @@ type Album struct {
 	TotalTracks int         `json:"totalTracks,omitempty"`
 	TotalDiscs  int         `json:"totalDiscs,omitempty"`
 	Tracks      []Track     `json:"tracks,omitempty"`
+	AudioModes  []string    `json:"audioModes,omitempty"`
+	MediaTags   []string    `json:"mediaTags,omitempty"`
 }
 
 type Artist struct {
@@ -81,8 +84,9 @@ type DiscographyResult struct {
 }
 
 type Lyrics struct {
-	Lyrics   string `json:"lyrics"`
-	Unsynced bool   `json:"unsynced"`
+	Lyrics       string `json:"lyrics"`
+	Unsynced     bool   `json:"unsynced"`
+	SyncedLyrics string `json:"syncedLyrics,omitempty"`
 }
 
 // TrackID handles the polymorphic track ID (can be number or string in JSON).

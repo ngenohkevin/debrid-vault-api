@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -127,6 +128,131 @@ func (m *Manager) SetMaxSegments(n int) {
 	}
 	m.engine.maxSegments = n
 	m.cfg.MaxSegmentsPerFile = n
+}
+
+// AddTrackedDownload adds an externally-created download item to the manager for tracking.
+// Used by Tidal provider which manages its own download logic.
+func (m *Manager) AddTrackedDownload(item *DownloadItem, cancel context.CancelFunc) {
+	m.mu.Lock()
+	m.downloads[item.ID] = item
+	m.cancels[item.ID] = cancel
+	m.mu.Unlock()
+	m.emit(Event{Type: "added", Data: *item})
+}
+
+// UpdateItemStatus updates the status of a download item and emits an event.
+func (m *Manager) UpdateItemStatus(id string, status Status) {
+	m.mu.Lock()
+	item, ok := m.downloads[id]
+	if ok {
+		item.Status = status
+	}
+	m.mu.Unlock()
+	if ok {
+		m.emit(Event{Type: "progress", Data: *item})
+	}
+}
+
+// SetItemError marks a download as failed with an error message.
+func (m *Manager) SetItemError(id, errMsg string) {
+	m.mu.Lock()
+	item, ok := m.downloads[id]
+	if ok {
+		item.Status = StatusError
+		item.Error = errMsg
+		item.Speed = 0
+		item.ETA = 0
+	}
+	m.mu.Unlock()
+	if ok {
+		m.emit(Event{Type: "error", Data: *item})
+		m.saveHistory()
+	}
+}
+
+// MoveCompletedFile moves a downloaded file from staging to its final destination.
+// Used by external providers (Tidal) that handle their own download logic.
+func (m *Manager) MoveCompletedFile(ctx context.Context, item *DownloadItem, stagingPath string) {
+	m.updateStatus(item, StatusMoving, "")
+
+	category := item.Category
+	var finalDir string
+	switch category {
+	case CategoryMovies:
+		finalDir = m.cfg.MoviesDir
+	case CategoryTVShows:
+		finalDir = m.cfg.TVShowsDir
+	case CategoryMusic:
+		finalDir = m.cfg.MusicDir
+	default:
+		finalDir = m.cfg.MoviesDir
+	}
+
+	if item.Folder != "" {
+		finalDir = filepath.Join(finalDir, item.Folder)
+	}
+
+	if err := os.MkdirAll(finalDir, 0755); err != nil {
+		m.setError(item, fmt.Sprintf("Failed to create dir: %v", err))
+		return
+	}
+
+	finalPath := filepath.Join(finalDir, item.Name)
+
+	// Remove existing file if present
+	if _, err := os.Stat(finalPath); err == nil {
+		log.Printf("Overwriting existing: %s", finalPath)
+		os.Remove(finalPath)
+	}
+
+	// Try rename first (same filesystem), fallback to copy+delete
+	if err := os.Rename(stagingPath, finalPath); err != nil {
+		if err := copyFile(stagingPath, finalPath); err != nil {
+			m.setError(item, fmt.Sprintf("Failed to move: %v", err))
+			return
+		}
+		os.Remove(stagingPath)
+	}
+
+	now := time.Now()
+	m.mu.Lock()
+	item.Status = StatusCompleted
+	item.Progress = 1.0
+	item.FilePath = finalPath
+	item.CompletedAt = &now
+	item.Speed = 0
+	item.ETA = 0
+	m.markCompleted(item.Source)
+	m.mu.Unlock()
+
+	m.emit(Event{Type: "completed", Data: *item})
+	m.saveHistory()
+	log.Printf("Download complete: %s -> %s", item.Name, finalPath)
+
+	// Post-move hook (metadata tagging)
+	if m.postMoveHook != nil {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("postMoveHook panic for %s: %v", item.Name, r)
+				}
+			}()
+			m.postMoveHook(item.ID, finalPath)
+		}()
+	}
+}
+
+// AcquireSlot blocks until a concurrency slot is available.
+func (m *Manager) AcquireSlot(ctx context.Context) {
+	select {
+	case m.sem <- struct{}{}:
+	case <-ctx.Done():
+	}
+}
+
+// ReleaseSlot releases a concurrency slot.
+func (m *Manager) ReleaseSlot() {
+	<-m.sem
 }
 
 func (m *Manager) Shutdown() {
@@ -1261,6 +1387,24 @@ func (m *Manager) loadHistory() {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) loadCompletedSources() {

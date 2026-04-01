@@ -13,16 +13,21 @@ import (
 
 // TrackMeta holds metadata to embed in a FLAC file.
 type TrackMeta struct {
-	Title       string
-	Artist      string
-	Album       string
-	AlbumArtist string
-	TrackNumber int
-	TotalTracks int
-	DiscNumber  int
-	Genre       string
-	Year        string
-	CoverURL    string
+	Title        string
+	Artist       string
+	Album        string
+	AlbumArtist  string
+	TrackNumber  int
+	TotalTracks  int
+	DiscNumber   int
+	Genre        string
+	Year         string
+	CoverURL     string
+	Copyright    string
+	Lyrics       string // plain lyrics (LYRICS vorbis comment)
+	SyncedLyrics string // LRC format (written as .lrc sidecar)
+	BitDepth     int
+	SampleRate   int
 	// MusicBrainz enrichment
 	ISRC            string
 	Label           string
@@ -133,6 +138,12 @@ func TagFLAC(filePath string, meta TrackMeta) error {
 	if meta.ReleaseGroupID != "" {
 		args = append(args, "-metadata", "MUSICBRAINZ_RELEASEGROUPID="+meta.ReleaseGroupID)
 	}
+	if meta.Copyright != "" {
+		args = append(args, "-metadata", "COPYRIGHT="+meta.Copyright)
+	}
+	if meta.Lyrics != "" {
+		args = append(args, "-metadata", "LYRICS="+meta.Lyrics)
+	}
 
 	args = append(args, tmpOut)
 
@@ -146,6 +157,12 @@ func TagFLAC(filePath string, meta TrackMeta) error {
 	if err := os.Rename(tmpOut, filePath); err != nil {
 		os.Remove(tmpOut)
 		return fmt.Errorf("rename failed: %v", err)
+	}
+
+	// Write .lrc sidecar for synced lyrics
+	if meta.SyncedLyrics != "" {
+		lrcPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".lrc"
+		_ = os.WriteFile(lrcPath, []byte(meta.SyncedLyrics), 0644)
 	}
 
 	return nil

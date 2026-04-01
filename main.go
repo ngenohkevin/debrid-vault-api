@@ -19,6 +19,7 @@ import (
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
 	"github.com/ngenohkevin/debrid-vault-api/internal/realdebrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/server"
+	"github.com/ngenohkevin/debrid-vault-api/internal/tidal"
 	"github.com/ngenohkevin/debrid-vault-api/internal/torbox"
 )
 
@@ -60,11 +61,15 @@ func main() {
 		log.Println("DAB Music: no credentials configured (set DAB_EMAIL/DAB_PASSWORD)")
 	}
 
+	// Tidal Music client (via hifi-api-workers)
+	tidalClient := tidal.NewClient(cfg.TidalAPIURL)
+	log.Printf("Tidal Music: API at %s", cfg.TidalAPIURL)
+
 	// Start stale file cleanup
 	cleanupStop := make(chan struct{})
 	dlManager.StartCleanup(cleanupStop)
 
-	srv := server.New(cfg, providers, dlManager, scheduler, library, dabClient)
+	srv := server.New(cfg, providers, dlManager, scheduler, library, dabClient, tidalClient)
 	scheduler.SetMusicHandler(srv.HandleMusicSchedule)
 
 	// MusicBrainz client for metadata enrichment
@@ -87,20 +92,34 @@ func main() {
 		fmt.Sscanf(meta["trackNumber"], "%d", &trackNum)
 		fmt.Sscanf(meta["totalTracks"], "%d", &totalTracks)
 
+		discNum := 0
+		bitDepth := 0
+		sampleRate := 0
+		fmt.Sscanf(meta["discNumber"], "%d", &discNum)
+		fmt.Sscanf(meta["bitDepth"], "%d", &bitDepth)
+		fmt.Sscanf(meta["sampleRate"], "%d", &sampleRate)
+
 		tagMeta := dab.TrackMeta{
-			Title:       meta["title"],
-			Artist:      meta["artist"],
-			Album:       meta["album"],
-			AlbumArtist: meta["albumArtist"],
-			TrackNumber: trackNum,
-			TotalTracks: totalTracks,
-			Genre:       meta["genre"],
-			Year:        meta["year"],
-			CoverURL:    meta["cover"],
+			Title:        meta["title"],
+			Artist:       meta["artist"],
+			Album:        meta["album"],
+			AlbumArtist:  meta["albumArtist"],
+			TrackNumber:  trackNum,
+			TotalTracks:  totalTracks,
+			DiscNumber:   discNum,
+			Genre:        meta["genre"],
+			Year:         meta["year"],
+			CoverURL:     meta["cover"],
+			Copyright:    meta["copyright"],
+			Lyrics:       meta["lyrics"],
+			SyncedLyrics: meta["syncedLyrics"],
+			ISRC:         meta["isrc"],
+			BitDepth:     bitDepth,
+			SampleRate:   sampleRate,
 		}
 
-		// Enrich with MusicBrainz data
-		mb := mbClient.EnrichTrack(meta["title"], meta["artist"], meta["album"], meta["isrc"])
+		// Enrich with MusicBrainz data (use ISRC from Tidal for better matching)
+		mb := mbClient.EnrichTrack(meta["title"], meta["artist"], meta["album"], tagMeta.ISRC)
 		if mb != nil {
 			tagMeta.ISRC = mb.ISRC
 			tagMeta.Label = mb.Label
@@ -125,8 +144,8 @@ func main() {
 	})
 
 	httpServer := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      srv.Router(),
+		Addr:              ":" + cfg.Port,
+		Handler:           srv.Router(),
 		WriteTimeout:      24 * time.Hour,
 		ReadHeaderTimeout: 15 * time.Second,
 	}

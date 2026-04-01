@@ -10,6 +10,7 @@ import (
 	"github.com/ngenohkevin/debrid-vault-api/internal/debrid"
 	"github.com/ngenohkevin/debrid-vault-api/internal/downloader"
 	"github.com/ngenohkevin/debrid-vault-api/internal/media"
+	"github.com/ngenohkevin/debrid-vault-api/internal/tidal"
 )
 
 type Server struct {
@@ -19,9 +20,10 @@ type Server struct {
 	scheduler *downloader.Scheduler
 	library   *media.Library
 	dab       *dab.Client
+	tidal     *tidal.Client
 }
 
-func New(cfg *config.Config, providers map[string]debrid.Provider, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library, dabClient *dab.Client) *Server {
+func New(cfg *config.Config, providers map[string]debrid.Provider, dlManager *downloader.Manager, scheduler *downloader.Scheduler, library *media.Library, dabClient *dab.Client, tidalClient *tidal.Client) *Server {
 	return &Server{
 		cfg:       cfg,
 		providers: providers,
@@ -29,6 +31,7 @@ func New(cfg *config.Config, providers map[string]debrid.Provider, dlManager *do
 		scheduler: scheduler,
 		library:   library,
 		dab:       dabClient,
+		tidal:     tidalClient,
 	}
 }
 
