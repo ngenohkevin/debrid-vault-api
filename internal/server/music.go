@@ -294,14 +294,21 @@ func (s *Server) tidalDownloadTrack(trackID, filename, folder, groupID, groupNam
 			s.dlManager.UpdateItemProgress(item.ID, downloaded, total)
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			s.dlManager.SetItemError(item.ID, fmt.Sprintf("Download failed: %v", err))
-			cancel()
 			return
+		}
+
+		// Update with actual file size
+		if fi, statErr := os.Stat(destPath); statErr == nil {
+			s.dlManager.UpdateItemProgress(item.ID, fi.Size(), fi.Size())
 		}
 
 		// Get lyrics (best effort)
 		var lyrics, syncedLyrics string
-		if lyr, err := s.tidal.GetLyrics(trackID); err == nil && lyr != nil {
+		if lyr, lyrErr := s.tidal.GetLyrics(trackID); lyrErr == nil && lyr != nil {
 			lyrics = lyr.Lyrics
 			syncedLyrics = lyr.SyncedLyrics
 		}
@@ -434,20 +441,25 @@ func (s *Server) tidalDownloadAlbum(album *dab.Album) []*downloader.DownloadItem
 			s.dlManager.UpdateItemStatus(item.ID, downloader.StatusDownloading)
 
 			quality, bitDepth, sampleRate, err := s.tidal.DownloadTrackAudioWithProgress(ctx, trackID, destPath, func(downloaded, total int64) {
-			s.dlManager.UpdateItemProgress(item.ID, downloaded, total)
-		})
+				s.dlManager.UpdateItemProgress(item.ID, downloaded, total)
+			})
 			if err != nil {
 				if ctx.Err() != nil {
-					return // cancelled
+					return
 				}
 				s.dlManager.SetItemError(item.ID, fmt.Sprintf("Download failed: %v", err))
 				return
 			}
 			_ = quality
 
+			// Update with actual file size
+			if fi, statErr := os.Stat(destPath); statErr == nil {
+				s.dlManager.UpdateItemProgress(item.ID, fi.Size(), fi.Size())
+			}
+
 			// Get lyrics
 			var lyrics, syncedLyrics string
-			if lyr, err := s.tidal.GetLyrics(trackID); err == nil && lyr != nil {
+			if lyr, lyrErr := s.tidal.GetLyrics(trackID); lyrErr == nil && lyr != nil {
 				lyrics = lyr.Lyrics
 				syncedLyrics = lyr.SyncedLyrics
 			}

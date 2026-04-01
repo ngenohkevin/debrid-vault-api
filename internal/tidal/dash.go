@@ -102,7 +102,9 @@ func (c *Client) downloadDirect(ctx context.Context, base64Manifest, destPath st
 		return err
 	}
 
-	resp, err := c.http.Do(req)
+	// Use a client with no timeout for downloads — context handles cancellation
+	dlClient := &http.Client{}
+	resp, err := dlClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download stream: %w", err)
 	}
@@ -168,7 +170,7 @@ func (c *Client) downloadDASH(ctx context.Context, base64Manifest, destPath stri
 	segPath := segFile.Name()
 	defer os.Remove(segPath)
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{} // no timeout — context handles cancellation
 	totalSegments := int64(len(urls))
 	for i, u := range urls {
 		select {
