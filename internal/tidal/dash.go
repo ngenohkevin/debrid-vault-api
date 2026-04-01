@@ -221,39 +221,19 @@ func (c *Client) downloadDASH(ctx context.Context, base64Manifest, destPath stri
 	}
 	segFile.Close()
 
-	// Remux to FLAC with ffmpeg
-	// If codec is FLAC, use -c:a copy; if ALAC, transcode to FLAC
-	codecArg := "copy"
-	if strings.Contains(strings.ToLower(manifest.Codec), "alac") ||
-		strings.Contains(strings.ToLower(manifest.MimeType), "mp4") {
-		// MP4 container may have ALAC or FLAC — try copy first
-		codecArg = "copy"
-	}
-
+	// Convert to FLAC with ffmpeg — always re-encode to ensure clean FLAC
+	// container with proper seek tables (remux from DASH MP4 can produce
+	// corrupt seek tables that break Jellyfin playback)
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-i", segPath,
-		"-c:a", codecArg,
-		"-vn", // no video
+		"-c:a", "flac",
+		"-compression_level", "8",
+		"-vn",
 		destPath,
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// If copy failed (e.g. ALAC), try transcoding to FLAC
-		if codecArg == "copy" {
-			log.Printf("ffmpeg copy failed, trying transcode: %s", string(output))
-			cmd2 := exec.CommandContext(ctx, "ffmpeg", "-y",
-				"-i", segPath,
-				"-c:a", "flac",
-				"-vn",
-				destPath,
-			)
-			output2, err2 := cmd2.CombinedOutput()
-			if err2 != nil {
-				return fmt.Errorf("ffmpeg transcode failed: %v — %s", err2, string(output2))
-			}
-			return nil
-		}
-		return fmt.Errorf("ffmpeg remux failed: %v — %s", err, string(output))
+		return fmt.Errorf("ffmpeg encode failed: %v — %s", err, string(output))
 	}
 	return nil
 }
