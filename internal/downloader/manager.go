@@ -153,6 +153,23 @@ func (m *Manager) UpdateItemStatus(id string, status Status) {
 	}
 }
 
+// UpdateItemProgress updates download progress and emits an SSE event.
+func (m *Manager) UpdateItemProgress(id string, downloaded, total int64) {
+	m.mu.Lock()
+	item, ok := m.downloads[id]
+	if ok {
+		item.Downloaded = downloaded
+		if total > 0 {
+			item.Size = total
+			item.Progress = float64(downloaded) / float64(total)
+		}
+	}
+	m.mu.Unlock()
+	if ok {
+		m.emit(Event{Type: "progress", Data: *item})
+	}
+}
+
 // SetItemError marks a download as failed with an error message.
 func (m *Manager) SetItemError(id, errMsg string) {
 	m.mu.Lock()

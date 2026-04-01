@@ -41,9 +41,17 @@ type directManifest struct {
 	URLs     []string `json:"urls"`
 }
 
+// ProgressFunc reports download progress for a Tidal track.
+type ProgressFunc func(downloaded, total int64)
+
 // DownloadTrackAudio downloads a track's audio to destPath as FLAC.
 // Tries HI_RES_LOSSLESS first, falls back to LOSSLESS.
 func (c *Client) DownloadTrackAudio(ctx context.Context, trackID, destPath string) (quality string, bitDepth int, sampleRate int, err error) {
+	return c.DownloadTrackAudioWithProgress(ctx, trackID, destPath, nil)
+}
+
+// DownloadTrackAudioWithProgress downloads with optional progress reporting.
+func (c *Client) DownloadTrackAudioWithProgress(ctx context.Context, trackID, destPath string, progress ProgressFunc) (quality string, bitDepth int, sampleRate int, err error) {
 	// Try Hi-Res first
 	for _, q := range []string{QualityHiResLossless, QualityLossless} {
 		info, e := c.GetPlaybackInfo(trackID, q)
@@ -57,9 +65,9 @@ func (c *Client) DownloadTrackAudio(ctx context.Context, trackID, destPath strin
 		sampleRate = info.SampleRate
 
 		if strings.Contains(info.ManifestMimeType, "dash") || strings.Contains(info.ManifestMimeType, "xml") {
-			err = c.downloadDASH(ctx, info.Manifest, destPath)
+			err = c.downloadDASH(ctx, info.Manifest, destPath, progress)
 		} else {
-			err = c.downloadDirect(ctx, info.Manifest, destPath)
+			err = c.downloadDirect(ctx, info.Manifest, destPath, progress)
 		}
 		if err == nil {
 			return quality, bitDepth, sampleRate, nil
@@ -73,7 +81,7 @@ func (c *Client) DownloadTrackAudio(ctx context.Context, trackID, destPath strin
 	return
 }
 
-func (c *Client) downloadDirect(ctx context.Context, base64Manifest, destPath string) error {
+func (c *Client) downloadDirect(ctx context.Context, base64Manifest, destPath string, progress ProgressFunc) error {
 	decoded, err := base64.StdEncoding.DecodeString(base64Manifest)
 	if err != nil {
 		return fmt.Errorf("decode manifest: %w", err)
@@ -104,17 +112,38 @@ func (c *Client) downloadDirect(ctx context.Context, base64Manifest, destPath st
 		return fmt.Errorf("stream returned %d", resp.StatusCode)
 	}
 
+	total := resp.ContentLength
+
 	f, err := os.Create(destPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	_, err = io.Copy(f, resp.Body)
-	return err
+	var downloaded int64
+	buf := make([]byte, 128*1024)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := f.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			downloaded += int64(n)
+			if progress != nil {
+				progress(downloaded, total)
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return readErr
+		}
+	}
+	return nil
 }
 
-func (c *Client) downloadDASH(ctx context.Context, base64Manifest, destPath string) error {
+func (c *Client) downloadDASH(ctx context.Context, base64Manifest, destPath string, progress ProgressFunc) error {
 	decoded, err := base64.StdEncoding.DecodeString(base64Manifest)
 	if err != nil {
 		return fmt.Errorf("decode DASH manifest: %w", err)
@@ -139,7 +168,8 @@ func (c *Client) downloadDASH(ctx context.Context, base64Manifest, destPath stri
 	segPath := segFile.Name()
 	defer os.Remove(segPath)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
+	totalSegments := int64(len(urls))
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
@@ -148,23 +178,43 @@ func (c *Client) downloadDASH(ctx context.Context, base64Manifest, destPath stri
 		default:
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-		if err != nil {
+		// Retry each segment up to 3 times
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			}
+
+			req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+			if err != nil {
+				segFile.Close()
+				return err
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = fmt.Errorf("segment %d/%d attempt %d: %w", i+1, len(urls), attempt+1, err)
+				continue
+			}
+
+			_, err = io.Copy(segFile, resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				lastErr = fmt.Errorf("segment %d write: %w", i+1, err)
+				continue
+			}
+
+			lastErr = nil
+			break
+		}
+		if lastErr != nil {
 			segFile.Close()
-			return err
+			return lastErr
 		}
 
-		resp, err := client.Do(req)
-		if err != nil {
-			segFile.Close()
-			return fmt.Errorf("segment %d/%d: %w", i+1, len(urls), err)
-		}
-
-		_, err = io.Copy(segFile, resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			segFile.Close()
-			return fmt.Errorf("segment %d write: %w", i+1, err)
+		// Report progress as segment count
+		if progress != nil {
+			progress(int64(i+1), totalSegments)
 		}
 	}
 	segFile.Close()

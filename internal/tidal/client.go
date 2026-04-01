@@ -21,7 +21,7 @@ type Client struct {
 // NewClient creates a new Tidal API client pointing at the hifi-api-workers.
 func NewClient(baseURL string) *Client {
 	return &Client{
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: 60 * time.Second},
 		baseURL: baseURL,
 	}
 }

@@ -290,7 +290,9 @@ func (s *Server) tidalDownloadTrack(trackID, filename, folder, groupID, groupNam
 
 		s.dlManager.UpdateItemStatus(item.ID, downloader.StatusDownloading)
 
-		quality, bitDepth, sampleRate, err := s.tidal.DownloadTrackAudio(ctx, trackID, destPath)
+		quality, bitDepth, sampleRate, err := s.tidal.DownloadTrackAudioWithProgress(ctx, trackID, destPath, func(downloaded, total int64) {
+			s.dlManager.UpdateItemProgress(item.ID, downloaded, total)
+		})
 		if err != nil {
 			s.dlManager.SetItemError(item.ID, fmt.Sprintf("Download failed: %v", err))
 			cancel()
@@ -431,7 +433,9 @@ func (s *Server) tidalDownloadAlbum(album *dab.Album) []*downloader.DownloadItem
 
 			s.dlManager.UpdateItemStatus(item.ID, downloader.StatusDownloading)
 
-			quality, bitDepth, sampleRate, err := s.tidal.DownloadTrackAudio(ctx, trackID, destPath)
+			quality, bitDepth, sampleRate, err := s.tidal.DownloadTrackAudioWithProgress(ctx, trackID, destPath, func(downloaded, total int64) {
+			s.dlManager.UpdateItemProgress(item.ID, downloaded, total)
+		})
 			if err != nil {
 				if ctx.Err() != nil {
 					return // cancelled
