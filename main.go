@@ -141,6 +141,18 @@ func main() {
 		} else {
 			log.Printf("Tagged: %s", finalPath)
 		}
+
+		// Trigger Jellyfin library scan after music tagging
+		if cfg.JellyfinAPIKey != "" {
+			go func() {
+				req, _ := http.NewRequest("POST", cfg.JellyfinURL+"/Library/Refresh", nil)
+				req.Header.Set("X-Emby-Token", cfg.JellyfinAPIKey)
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil {
+					resp.Body.Close()
+				}
+			}()
+		}
 	})
 
 	httpServer := &http.Server{
