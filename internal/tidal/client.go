@@ -162,18 +162,36 @@ func (c *Client) GetAlbum(albumID string) (*dab.Album, error) {
 		return nil, err
 	}
 
-	// The album endpoint returns the album + items (tracks) in a wrapper
+	// The album endpoint returns the album + items (tracks wrapped in {item: ...})
 	var raw struct {
 		tidalAlbum
-		Items []tidalTrack `json:"items"`
+		Items []struct {
+			Item tidalTrack `json:"item"`
+		} `json:"items"`
+		FlatItems []tidalTrack `json:"-"` // fallback
 	}
-	// Try parsing as {album details + items}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse album: %w", err)
 	}
 
+	// If items have nested "item" wrapper, extract; otherwise try flat
+	var tracks []tidalTrack
+	for _, wrapper := range raw.Items {
+		if wrapper.Item.ID > 0 {
+			tracks = append(tracks, wrapper.Item)
+		}
+	}
+	// Fallback: try parsing items as flat tracks
+	if len(tracks) == 0 {
+		var flatRaw struct {
+			Items []tidalTrack `json:"items"`
+		}
+		json.Unmarshal(data, &flatRaw)
+		tracks = flatRaw.Items
+	}
+
 	album := raw.tidalAlbum.toDABAlbum()
-	for _, t := range raw.Items {
+	for _, t := range tracks {
 		track := t.toDABTrack()
 		// Fill in album-level data the track may not have
 		if track.AlbumTitle == "" {
