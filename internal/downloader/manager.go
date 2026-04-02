@@ -164,14 +164,13 @@ func (m *Manager) UpdateItemProgress(id string, downloaded, total int64) {
 		// Set byte-based sizes for actual byte counts (>1KB = not segment counts)
 		if total > 1024 {
 			// Calculate speed from delta
-			prevDownloaded := item.Downloaded
-			now := time.Now()
-			elapsed := now.Sub(item.CreatedAt).Seconds()
-			if elapsed > 0 && downloaded > prevDownloaded {
-				item.Speed = downloaded / int64(elapsed)
-				remaining := total - downloaded
-				if item.Speed > 0 {
-					item.ETA = remaining / item.Speed
+			elapsed := time.Since(item.CreatedAt).Seconds()
+			if elapsed > 1 && downloaded > 0 {
+				speed := int64(float64(downloaded) / elapsed)
+				if speed > 0 {
+					item.Speed = speed
+					remaining := total - downloaded
+					item.ETA = remaining / speed
 				}
 			}
 			item.Downloaded = downloaded
