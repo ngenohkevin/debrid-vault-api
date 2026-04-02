@@ -161,20 +161,20 @@ func (m *Manager) UpdateItemProgress(id string, downloaded, total int64) {
 		if total > 0 {
 			item.Progress = float64(downloaded) / float64(total)
 		}
-		// Set byte-based sizes for actual byte counts (>1KB = not segment counts)
+		// Byte-based progress (>1KB means actual bytes, not segment counts)
 		if total > 1024 {
-			// Calculate speed from delta
-			elapsed := time.Since(item.CreatedAt).Seconds()
-			if elapsed > 1 && downloaded > 0 {
-				speed := int64(float64(downloaded) / elapsed)
-				if speed > 0 {
-					item.Speed = speed
-					remaining := total - downloaded
-					item.ETA = remaining / speed
-				}
-			}
 			item.Downloaded = downloaded
 			item.Size = total
+		}
+		// Calculate speed from actual bytes on disk if available
+		elapsed := time.Since(item.CreatedAt).Seconds()
+		if elapsed > 1 && item.Size > 0 && item.Downloaded > 0 {
+			speed := int64(float64(item.Downloaded) / elapsed)
+			if speed > 0 {
+				item.Speed = speed
+				remaining := item.Size - item.Downloaded
+				item.ETA = remaining / speed
+			}
 		}
 	}
 	m.mu.Unlock()
