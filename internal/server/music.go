@@ -390,7 +390,14 @@ func (s *Server) musicDownloadAlbum(c *gin.Context) {
 }
 
 func (s *Server) tidalDownloadAlbum(album *dab.Album) []*downloader.DownloadItem {
-	folder := sanitizeFilename(album.Artist) + "/" + sanitizeFilename(album.Title)
+	// Singles (1-2 tracks) go into a shared "Singles" folder per artist
+	// so Jellyfin groups them instead of showing separate albums
+	isSingle := len(album.Tracks) <= 2
+	albumFolder := album.Title
+	if isSingle {
+		albumFolder = "Singles"
+	}
+	folder := sanitizeFilename(album.Artist) + "/" + sanitizeFilename(albumFolder)
 	groupID := uuid.New().String()[:8]
 	groupName := album.Artist + " - " + album.Title
 
@@ -469,10 +476,14 @@ func (s *Server) tidalDownloadAlbum(album *dab.Album) []*downloader.DownloadItem
 				year = album.ReleaseDate[:4]
 			}
 
+			metaAlbum := album.Title
+			if isSingle {
+				metaAlbum = "Singles"
+			}
 			s.dlManager.SetMeta(item.ID, map[string]string{
 				"title":        trackTitle,
 				"artist":       trackArtist,
-				"album":        album.Title,
+				"album":        metaAlbum,
 				"albumArtist":  album.Artist,
 				"trackNumber":  fmt.Sprintf("%d", trackNum),
 				"totalTracks":  fmt.Sprintf("%d", album.TotalTracks),
