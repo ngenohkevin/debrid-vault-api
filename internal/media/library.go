@@ -41,6 +41,14 @@ func (l *Library) ListMedia(category string) ([]MediaFile, error) {
 
 	var files []MediaFile
 	for _, d := range dirs {
+		if d.cat == "music" {
+			// Music: walk recursively to find actual audio files
+			// Show as "Artist/Album/track.flac" with relative path display
+			musicFiles := listMusicFiles(d.path)
+			files = append(files, musicFiles...)
+			continue
+		}
+
 		entries, err := os.ReadDir(d.path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -61,23 +69,57 @@ func (l *Library) ListMedia(category string) ([]MediaFile, error) {
 				IsDir:    entry.IsDir(),
 				Category: d.cat,
 			}
-			// Skip subtitle probing for music files
-			if d.cat != "music" {
-				if entry.IsDir() {
-					// Probe first video file inside directory as representative sample
-					hasSubs, tracks := probeFirstVideoInDir(mf.Path)
-					mf.HasSubtitles = hasSubs
-					mf.SubtitleTracks = tracks
-				} else {
-					hasSubs, tracks := ProbeSubtitles(mf.Path)
-					mf.HasSubtitles = &hasSubs
-					mf.SubtitleTracks = tracks
-				}
+			if entry.IsDir() {
+				hasSubs, tracks := probeFirstVideoInDir(mf.Path)
+				mf.HasSubtitles = hasSubs
+				mf.SubtitleTracks = tracks
+			} else {
+				hasSubs, tracks := ProbeSubtitles(mf.Path)
+				mf.HasSubtitles = &hasSubs
+				mf.SubtitleTracks = tracks
 			}
 			files = append(files, mf)
 		}
 	}
 	return files, nil
+}
+
+// listMusicFiles walks the music directory tree and returns audio files
+// with display names like "Artist/Album/01. Track.flac".
+func listMusicFiles(musicDir string) []MediaFile {
+	var files []MediaFile
+	audioExts := map[string]bool{
+		".flac": true, ".mp3": true, ".m4a": true, ".wav": true,
+		".alac": true, ".aac": true, ".ogg": true, ".opus": true,
+	}
+
+	filepath.Walk(musicDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(info.Name()))
+		if !audioExts[ext] {
+			return nil
+		}
+		// Build display name as relative path from music root: "Artist/Album/track.flac"
+		relPath, _ := filepath.Rel(musicDir, path)
+		displayName := relPath
+		if displayName == "" {
+			displayName = info.Name()
+		}
+
+		files = append(files, MediaFile{
+			Name:     displayName,
+			Path:     path,
+			Size:     info.Size(),
+			ModTime:  info.ModTime(),
+			IsDir:    false,
+			Category: "music",
+		})
+		return nil
+	})
+
+	return files
 }
 
 func (l *Library) SearchMedia(query string) ([]MediaFile, error) {
